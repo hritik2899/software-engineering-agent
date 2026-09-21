@@ -58,7 +58,7 @@ def git_auth_environment(settings: Settings) -> dict[str, str]:
 async def run_exec(
     *args: str,
     cwd: Path | None = None,
-    timeout: int = 600,
+    timeout_seconds: int = 600,
     env: dict[str, str] | None = None,
 ) -> str:
     process = await asyncio.create_subprocess_exec(
@@ -226,7 +226,7 @@ class DockerEnvironmentProvider(EnvironmentProvider):
         return caches
 
     async def prepare(self) -> None:
-        await run_exec("docker", "image", "inspect", self.settings.docker_image, timeout=60)
+        await run_exec("docker", "image", "inspect", self.settings.docker_image, timeout_seconds=60)
 
     def _docker_cache_mounts(self) -> list[str]:
         return [
@@ -271,7 +271,7 @@ class DockerEnvironmentProvider(EnvironmentProvider):
             "infinity",
         ]
         try:
-            await run_exec(*args, timeout=300)
+            await run_exec(*args, timeout_seconds=300)
         except (OSError, EnvironmentError):
             await self.local.release(workspace)
             raise
