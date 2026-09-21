@@ -1,12 +1,12 @@
 """Domain contracts shared by API, orchestration and runtime layers.
 
-The IDs are intentionally separate:
+IDs intentionally model different lifetimes:
 * task_id        -> WHAT engineering work exists.
 * session_id     -> WHAT the agent has learned/done so far.
 * environment_id -> WHERE the code currently executes.
 
-A task can survive a dead environment; recovery simply points the same task/session
-at a replacement environment.
+A task can survive a dead environment; recovery simply points the same logical
+work/session at a replacement environment.
 """
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ class RepositorySpec(BaseModel):
 
 class TaskCreate(BaseModel):
     instruction: str = Field(min_length=3)
-    repositories: list[RepositorySpec]
+    repositories: list[RepositorySpec] = Field(default_factory=list)
     user_id: str = "local-user"
     publish_pr: bool = False
 
@@ -100,8 +100,8 @@ class SessionView(BaseModel):
     id: str
     task_id: str
     summary: str = ""
-    current_plan: list[str] = []
-    active_constraints: list[str] = []
+    current_plan: list[str] = Field(default_factory=list)
+    active_constraints: list[str] = Field(default_factory=list)
     last_event_sequence: int = 0
     created_at: datetime
     updated_at: datetime
@@ -113,7 +113,7 @@ class AgentEvent(BaseModel):
     session_id: str
     sequence: int
     type: EventType
-    payload: dict[str, Any] = {}
+    payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utcnow)
 
 

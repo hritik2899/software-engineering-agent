@@ -1,15 +1,13 @@
 """FastAPI control-plane API and replayable WebSocket event stream."""
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
 
 from minion.config import get_settings
 from minion.db import SessionFactory, init_db
-from minion.domain import TaskCreate, TaskView, UserInstruction
+from minion.domain import RepositorySpec, TaskCreate, TaskView, UserInstruction
 from minion.events import EventBus, EventStore
 from minion.logging import configure_logging
 from minion.orchestrator import Orchestrator
@@ -51,7 +49,10 @@ async def health() -> dict[str, str]:
 async def create_task(request: TaskCreate) -> TaskView:
     if not request.repositories:
         request.repositories = [
-            {"url": settings.default_repo_url, "base_branch": settings.default_base_branch}
+            RepositorySpec(
+                url=settings.default_repo_url,
+                base_branch=settings.default_base_branch,
+            )
         ]
     return await orchestrator.submit(request)
 
@@ -70,7 +71,7 @@ async def send_message(task_id: str, body: UserInstruction) -> dict[str, str]:
     try:
         await orchestrator.send_instruction(task_id, body.message)
     except KeyError:
-        raise HTTPException(404, "task not found")
+        raise HTTPException(404, "task not found") from None
     return {"status": "accepted"}
 
 
@@ -79,7 +80,7 @@ async def cancel_task(task_id: str) -> TaskView:
     try:
         return await orchestrator.cancel(task_id)
     except KeyError:
-        raise HTTPException(404, "task not found")
+        raise HTTPException(404, "task not found") from None
 
 
 @app.get("/tasks/{task_id}/events")
@@ -96,8 +97,6 @@ async def list_events(task_id: str, after: int = 0):
 async def task_events(websocket: WebSocket, task_id: str, after: int = 0):
     await websocket.accept()
     try:
-        # Replay first, then join live stream. Sequence numbers let clients dedupe
-        # an event that races between replay and subscription.
         async with SessionFactory() as db:
             if not await TaskRepository(db).get(task_id):
                 await websocket.close(code=4404)

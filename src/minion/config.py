@@ -1,9 +1,4 @@
-"""Central configuration.
-
-All machine-, repo- and credential-specific values live outside the codebase.  This
-keeps orchestration code deterministic and makes the project safe to run against a
-throwaway repository before pointing it at a real one.
-"""
+"""Central configuration."""
 from functools import lru_cache
 from pathlib import Path
 
@@ -12,11 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_prefix="MINION_",
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="MINION_", extra="ignore")
 
     env: str = "dev"
     database_url: str = "sqlite+aiosqlite:///./minion.db"
@@ -33,7 +24,7 @@ class Settings(BaseSettings):
     context_max_chars: int = 60_000
 
     environment_provider: str = "local"
-    docker_image: str = "python:3.12-bookworm"
+    docker_image: str = "minion-sandbox:latest"
     command_timeout_seconds: int = 600
     warm_pool_size: int = 2
 

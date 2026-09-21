@@ -1,8 +1,7 @@
 """Durable event log plus live fan-out.
 
-WebSockets are a transport, not the source of truth.  Every event is persisted
-first with a monotonically increasing sequence.  A reconnecting UI can ask for
-all events after its last seen sequence and then rejoin the live stream.
+WebSockets are transport, not truth. Events are persisted with monotonically
+increasing sequence numbers so clients can reconnect and replay missed history.
 """
 from __future__ import annotations
 
@@ -30,7 +29,7 @@ class EventBus:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
-                # The durable event log lets a slow client reconnect and replay.
+                # Slow clients recover from the durable log on reconnect.
                 pass
 
     async def subscribe(self, task_id: str) -> AsyncIterator[AgentEvent]:
@@ -57,10 +56,10 @@ class EventStore:
         event_type: EventType,
         payload: dict[str, Any] | None = None,
     ) -> AgentEvent:
-        # The session row is our sequence allocator.  update() + transaction keeps
-        # ordering durable for a single SQL database. PostgreSQL deployments can
-        # additionally use SELECT ... FOR UPDATE if writers are highly concurrent.
-        session = await self.db.get(SessionRow, session_id)
+        # Row locking serializes sequence allocation in PostgreSQL. SQLite ignores
+        # FOR UPDATE but serializes writes at the database level.
+        stmt = select(SessionRow).where(SessionRow.id == session_id).with_for_update()
+        session = (await self.db.scalars(stmt)).one_or_none()
         if not session:
             raise KeyError(session_id)
         sequence = session.last_event_sequence + 1
