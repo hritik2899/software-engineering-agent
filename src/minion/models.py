@@ -30,7 +30,7 @@ class TaskRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    session: Mapped["SessionRow"] = relationship(back_populates="task", uselist=False)
+    session: Mapped[SessionRow] = relationship(back_populates="task", uselist=False)
 
 
 class SessionRow(Base):
@@ -50,9 +50,7 @@ class SessionRow(Base):
 
 class EventRow(Base):
     __tablename__ = "events"
-    __table_args__ = (
-        Index("ix_events_task_sequence", "task_id", "sequence", unique=True),
-    )
+    __table_args__ = (Index("ix_events_task_sequence", "task_id", "sequence", unique=True),)
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
@@ -64,11 +62,7 @@ class EventRow(Base):
 
 
 class EnvironmentLeaseRow(Base):
-    """Maps a logical environment ID to its active provider/workspace.
-
-    A lease is replaceable.  If a machine dies, the task/session remain and a new
-    environment lease can be attached during recovery.
-    """
+    __tablename__ = "environment_leases"
 
     id: Mapped[str] = mapped_column(String(120), primary_key=True)
     task_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)

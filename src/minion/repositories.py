@@ -7,6 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from minion.domain import (
+    EnvironmentStatus,
     RepositorySpec,
     SessionView,
     TaskCreate,
@@ -16,7 +17,7 @@ from minion.domain import (
     utcnow,
 )
 from minion.errors import InvalidStateTransition
-from minion.models import SessionRow, TaskRow
+from minion.models import EnvironmentLeaseRow, SessionRow, TaskRow
 from minion.state_machine import validate_transition
 
 
@@ -77,11 +78,6 @@ class TaskRepository:
         error: str | None = None,
         result: dict[str, Any] | None = None,
     ) -> TaskView:
-        """Optimistic state transition.
-
-        The WHERE version=... guard prevents two orchestrator workers from both
-        successfully claiming the same task after a duplicate delivery.
-        """
         row = await self.db.get(TaskRow, task_id)
         if not row:
             raise KeyError(task_id)
@@ -106,10 +102,19 @@ class TaskRepository:
             .where(TaskRow.id == task_id, TaskRow.version == expected_version)
             .values(**values)
         )
-        result_proxy = await self.db.execute(stmt)
-        if result_proxy.rowcount != 1:
+        proxy = await self.db.execute(stmt)
+        if proxy.rowcount != 1:
             await self.db.rollback()
             raise InvalidStateTransition("task changed concurrently; retry from fresh state")
+        await self.db.commit()
+        return await self.require(task_id)
+
+    async def replace_environment(self, task_id: str, environment_id: str) -> TaskView:
+        await self.db.execute(
+            update(TaskRow)
+            .where(TaskRow.id == task_id)
+            .values(environment_id=environment_id, updated_at=utcnow())
+        )
         await self.db.commit()
         return await self.require(task_id)
 
@@ -165,5 +170,64 @@ class SessionRepository:
             values["active_constraints"] = active_constraints
         await self.db.execute(
             update(SessionRow).where(SessionRow.id == session_id).values(**values)
+        )
+        await self.db.commit()
+
+    async def append_instruction(self, session_id: str, message: str, keep: int = 20) -> None:
+        current = await self.get(session_id)
+        if not current:
+            raise KeyError(session_id)
+        constraints = [*current.active_constraints, message][-keep:]
+        await self.update_memory(session_id, active_constraints=constraints)
+
+
+class EnvironmentRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def upsert(
+        self,
+        *,
+        environment_id: str,
+        task_id: str,
+        provider: str,
+        workspace_path: str,
+        status: EnvironmentStatus,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        row = await self.db.get(EnvironmentLeaseRow, environment_id)
+        if row is None:
+            row = EnvironmentLeaseRow(
+                id=environment_id,
+                task_id=task_id,
+                provider=provider,
+                workspace_path=workspace_path,
+                status=status.value,
+                metadata_json=metadata or {},
+            )
+            self.db.add(row)
+        else:
+            row.task_id = task_id
+            row.provider = provider
+            row.workspace_path = workspace_path
+            row.status = status.value
+            row.metadata_json = metadata or row.metadata_json
+            row.updated_at = utcnow()
+        row.last_heartbeat_at = utcnow()
+        await self.db.commit()
+
+    async def heartbeat(self, environment_id: str) -> None:
+        await self.db.execute(
+            update(EnvironmentLeaseRow)
+            .where(EnvironmentLeaseRow.id == environment_id)
+            .values(last_heartbeat_at=utcnow(), updated_at=utcnow())
+        )
+        await self.db.commit()
+
+    async def mark(self, environment_id: str, status: EnvironmentStatus) -> None:
+        await self.db.execute(
+            update(EnvironmentLeaseRow)
+            .where(EnvironmentLeaseRow.id == environment_id)
+            .values(status=status.value, updated_at=utcnow())
         )
         await self.db.commit()

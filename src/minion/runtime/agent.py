@@ -1,8 +1,4 @@
-"""Autonomous coding-agent loop.
-
-The Agent decides *what to do next*. ToolRegistry/Workspace perform the action.
-The surrounding runtime owns persistence, context, retries and observability.
-"""
+"""Autonomous coding-agent loop."""
 from __future__ import annotations
 
 from typing import Any
@@ -34,10 +30,12 @@ class CodingAgent:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def _model_turn(self, messages: list[dict[str, Any]]) -> ModelTurn:
-        return await self.llm.complete(messages, self.tools.schemas)
+        schemas = [*self.tools.schemas, *self.context.control_tool_schemas]
+        return await self.llm.complete(messages, schemas)
 
     async def run(self, task: TaskView) -> dict[str, Any]:
         for step in range(1, self.max_steps + 1):
+            await self.context.maybe_compact(task)
             await self.events.append(
                 task.id, task.session_id, EventType.AGENT_STEP, {"step": step}
             )
@@ -52,17 +50,55 @@ class CodingAgent:
                     {"content": turn.content, "step": step},
                 )
 
-            # No tool call means the model is declaring the engineering task done.
             if not turn.tool_calls:
-                return {"summary": turn.content, "steps": step}
+                await self.events.append(
+                    task.id,
+                    task.session_id,
+                    EventType.AGENT_MESSAGE,
+                    {
+                        "content": (
+                            "The model returned no tool call. Continue working and "
+                            "finish explicitly with finish_task after verification."
+                        ),
+                        "step": step,
+                    },
+                )
+                continue
 
             for call in turn.tool_calls:
                 await self.events.append(
                     task.id,
                     task.session_id,
                     EventType.TOOL_STARTED,
-                    {"tool": call.name, "arguments": call.arguments, "tool_call_id": call.id},
+                    {
+                        "tool": call.name,
+                        "arguments": call.arguments,
+                        "tool_call_id": call.id,
+                    },
                 )
+
+                if call.name in self.context.CONTROL_TOOLS:
+                    result = await self.context.execute_control_tool(
+                        task, call.name, call.arguments
+                    )
+                    await self.events.append(
+                        task.id,
+                        task.session_id,
+                        EventType.TOOL_COMPLETED,
+                        {
+                            "tool": call.name,
+                            "tool_call_id": call.id,
+                            "ok": True,
+                            "output": result.output,
+                        },
+                    )
+                    if result.terminal_payload is not None:
+                        return {
+                            **result.terminal_payload,
+                            "steps": step,
+                        }
+                    continue
+
                 result = await self.tools.execute(call.name, call.arguments)
                 await self.events.append(
                     task.id,
@@ -75,5 +111,13 @@ class CodingAgent:
                         "output": result.output,
                     },
                 )
+
+                if call.name == "checkpoint" and result.ok:
+                    await self.events.append(
+                        task.id,
+                        task.session_id,
+                        EventType.CHECKPOINT_CREATED,
+                        {"output": result.output},
+                    )
 
         raise RuntimeError(f"agent exceeded max steps ({self.max_steps})")
