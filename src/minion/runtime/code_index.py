@@ -29,7 +29,13 @@ class RepositoryContextIndex:
 
     async def _key(self, repo: Path) -> tuple[str, str]:
         head = (await self._git(repo, "rev-parse", "HEAD")).strip()
-        remote = (await self._git(repo, "config", "--get", "remote.origin.url")).strip()
+        try:
+            remote = (
+                await self._git(repo, "config", "--get", "remote.origin.url")
+            ).strip()
+        except RuntimeError:
+            # Local/temporary repositories may not have an origin yet.
+            remote = f"local:{repo.resolve()}"
         raw = f"{remote}::{head}".encode()
         return hashlib.sha256(raw).hexdigest(), head
 

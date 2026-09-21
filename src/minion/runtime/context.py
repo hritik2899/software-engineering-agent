@@ -120,9 +120,31 @@ class ContextManager:
             return ControlToolResult("constraint persisted")
 
         if name == "finish_task":
-            verification = [str(v) for v in arguments.get("verification", []) if str(v)]
+            verification = [
+                str(v) for v in arguments.get("verification", []) if str(v)
+            ]
             if not verification:
                 return ControlToolResult("finish rejected: verification is required")
+
+            # Do not trust a model's textual claim that it verified the work.
+            # Require evidence in the durable event log from the actual runtime.
+            history = await self.events.list_after(task.id, 0, limit=10_000)
+            successful_tools = {
+                str(event.payload.get("tool"))
+                for event in history
+                if event.type == EventType.TOOL_COMPLETED
+                and bool(event.payload.get("ok"))
+            }
+            missing: list[str] = []
+            if "run_command" not in successful_tools:
+                missing.append("a successful run_command verification")
+            if "git_diff" not in successful_tools:
+                missing.append("a successful git_diff inspection")
+            if missing:
+                return ControlToolResult(
+                    "finish rejected: missing " + " and ".join(missing)
+                )
+
             payload = {
                 "summary": str(arguments["summary"]),
                 "verification": verification,

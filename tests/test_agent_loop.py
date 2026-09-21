@@ -47,11 +47,16 @@ class ScriptedLLM:
                     )
                 ],
             )
+        if self.turn == 4:
+            return ModelTurn(
+                "",
+                [ToolCall("4", "git_diff", {"repo": "demo"})],
+            )
         return ModelTurn(
             "",
             [
                 ToolCall(
-                    "4",
+                    "5",
                     "finish_task",
                     {
                         "summary": "created answer.txt",
