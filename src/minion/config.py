@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     redis_url: str | None = None
     workspace_root: Path = Path(".minion/workspaces")
     cache_root: Path = Path(".minion/cache")
-    log_level: str = "INFO"
+    log_level: str = "INFO"\n    auto_create_schema: bool = True
 
     api_token: str | None = None
     allowed_repo_hosts: str = "github.com"

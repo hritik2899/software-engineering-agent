@@ -29,7 +29,13 @@ interface, model or execution path.
 - mid-execution user instructions
 - repository mirror cache
 - shared pip/npm/Maven/Gradle dependency caches
-- warmed Docker image
+- isolated warm Docker execution pool
+- commit-SHA repository-context cache and dependency hints
+- durable Redis Streams queue with acknowledgement/stale-work reclaim
+- Redis cross-instance live event fan-out with SQL event replay
+- durable context plans/constraints + history compaction
+- environment leases/heartbeats and startup reconciliation
+- Prometheus metrics, liveness/readiness, optional API bearer auth
 - optional GitHub branch push + pull-request publishing
 - CI tests and architecture/LLD documentation
 
@@ -57,6 +63,12 @@ cp .env.example .env
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+```
+
+For production-style database management, run migrations before startup:
+
+```bash
+MINION_AUTO_CREATE_SCHEMA=false alembic upgrade head
 ```
 
 Put your API key in `.env`:
@@ -159,9 +171,9 @@ Set `GITHUB_TOKEN`, make sure Git credentials can push the task branch, and subm
 with `"publish_pr": true`. The LLM never receives the GitHub token; publication is
 owned by the backend `GitHubPublisher`.
 
-## Six-commit learning path
+## Learning path
 
-The history is intentionally structured as six conceptual layers:
+The first six commits establish the conceptual layers; later audit/hardening commits make the implementation verifiable and closer to a deployable reference:
 
 1. repository initialization
 2. configuration + domain contracts
@@ -177,9 +189,7 @@ it in a system-design interview.
 
 The default local provider is **not a security sandbox**. Use Docker for untrusted
 commands and implement a Kubernetes/DevPod `EnvironmentProvider` for a real remote
-fleet. Production deployments should add organization IAM, network egress controls,
-resource quotas, secrets broker, migrations, distributed tracing/metrics, rate
-limits and a durable queue with delivery/visibility semantics.
+fleet. Production deployments should still integrate organization-specific IAM, a real secrets broker, external tracing, rate limits, and a remote DevPod/Kubernetes EnvironmentProvider. This repository now includes migrations, resource-limited Docker isolation, metrics, a durable acknowledged queue, repository/context caches, and distributed event fan-out.
 
 The interfaces in this repository are intentionally designed so those infrastructure
 upgrades do not require rewriting the coding agent.

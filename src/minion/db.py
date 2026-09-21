@@ -17,6 +17,13 @@ SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def init_db() -> None:
+    """Create tables only in zero-setup/dev mode.
+
+    Production should set MINION_AUTO_CREATE_SCHEMA=false and run Alembic
+    migrations before starting the API/worker processes.
+    """
+    if not settings.auto_create_schema:
+        return
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

@@ -21,7 +21,7 @@ dependencies = [
   "tenacity>=9.0",
   "structlog>=24.4",
   "prometheus-client>=0.21",
-  "filelock>=3.16",
+  "filelock>=3.16",\n  "alembic>=1.13",
 ]
 
 [project.optional-dependencies]
