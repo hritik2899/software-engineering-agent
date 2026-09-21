@@ -10,14 +10,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="MINION_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="MINION_",
+        extra="ignore",
+    )
 
     env: str = "dev"
     database_url: str = "sqlite+aiosqlite:///./minion.db"
     redis_url: str | None = None
     workspace_root: Path = Path(".minion/workspaces")
     cache_root: Path = Path(".minion/cache")
-    log_level: str = "INFO"\n    auto_create_schema: bool = True
+    log_level: str = "INFO"
+    auto_create_schema: bool = True
 
     api_token: str | None = None
     allowed_repo_hosts: str = "github.com"
