@@ -1,4 +1,5 @@
-from pathlib import Path\nimport subprocess
+import subprocess
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -32,7 +33,11 @@ class ScriptedLLM:
                     ToolCall(
                         "2",
                         "write_file",
-                        {"repo": "demo", "path": "answer.txt", "content": "done\n"},
+                        {
+                            "repo": "demo",
+                            "path": "answer.txt",
+                            "content": "done\n",
+                        },
                     )
                 ],
             )
@@ -48,10 +53,7 @@ class ScriptedLLM:
                 ],
             )
         if self.turn == 4:
-            return ModelTurn(
-                "",
-                [ToolCall("4", "git_diff", {"repo": "demo"})],
-            )
+            return ModelTurn("", [ToolCall("4", "git_diff", {"repo": "demo"})])
         return ModelTurn(
             "",
             [
@@ -76,11 +78,20 @@ async def test_agent_reason_tool_memory_finish_loop(tmp_path: Path):
     repo = tmp_path / "demo"
     repo.mkdir()
     subprocess.run(["git", "init"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=repo,
+        check=True,
+    )
     (repo / "baseline.txt").write_text("baseline\n")
     subprocess.run(["git", "add", "baseline.txt"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-m", "baseline"], cwd=repo, check=True)
+
     workspace = Workspace("env_test", tmp_path, {"demo": repo})
     settings = Settings(
         workspace_root=tmp_path / "workspaces",
@@ -97,7 +108,10 @@ async def test_agent_reason_tool_memory_finish_loop(tmp_path: Path):
         instruction="create answer.txt",
         status=TaskStatus.RUNNING,
         repositories=[
-            RepositorySpec(url="https://github.com/example/demo.git", name="demo")
+            RepositorySpec(
+                url="https://github.com/example/demo.git",
+                name="demo",
+            )
         ],
         publish_pr=False,
         created_at=now,
