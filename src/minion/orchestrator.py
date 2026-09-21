@@ -27,7 +27,7 @@ from minion.metrics import (
     TASKS_RUNNING,
     TASKS_SUBMITTED,
 )
-from minion.queue import WorkItem, WorkQueue
+from minion.queue import WorkQueue
 from minion.repositories import (
     EnvironmentRepository,
     SessionRepository,

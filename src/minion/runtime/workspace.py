@@ -1,9 +1,4 @@
-"""Execution environment providers.
-
-Docker mode implements a warm execution pool: containers are prestarted once and
-reused across tasks while each task keeps a separate host workspace. Repository
-mirrors and dependency caches remove repeated clone/download cold starts.
-"""
+"""Execution environment providers with isolated warm Docker slots."""
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +9,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
+
+from filelock import FileLock
 
 from minion.config import Settings
 from minion.domain import RepositorySpec, new_id
@@ -31,6 +28,7 @@ class Workspace:
     repositories: dict[str, Path] = field(default_factory=dict)
     container_name: str | None = None
     container_workspace_root: str | None = None
+    slot_id: str | None = None
 
     def repo_path(self, repo_name: str) -> Path:
         try:
@@ -43,6 +41,13 @@ class Workspace:
             raise EnvironmentError("workspace has no container path")
         relative = self.repo_path(repo_name).relative_to(self.root)
         return f"{self.container_workspace_root.rstrip('/')}/{relative}"
+
+
+@dataclass(slots=True)
+class WarmSlot:
+    slot_id: str
+    container_name: str
+    host_root: Path
 
 
 def repo_name(spec: RepositorySpec) -> str:
@@ -94,7 +99,9 @@ class EnvironmentProvider(ABC):
     ) -> Workspace | None: ...
 
     @abstractmethod
-    async def release(self, workspace: Workspace, *, destroy_workspace: bool = True) -> None: ...
+    async def release(
+        self, workspace: Workspace, *, destroy_workspace: bool = True
+    ) -> None: ...
 
     @abstractmethod
     async def healthy(self, workspace: Workspace) -> bool: ...
@@ -117,32 +124,61 @@ class LocalEnvironmentProvider(EnvironmentProvider):
     ) -> dict[str, Path]:
         result: dict[str, Path] = {}
         auth_env = git_environment(self.settings)
+
         for spec in repositories:
             name = repo_name(spec)
             mirror_key = hashlib.sha256(spec.url.encode()).hexdigest()
             mirror = self.repo_cache / f"{mirror_key}.git"
-            if mirror.exists():
-                await run_exec(
-                    "git", "remote", "update", "--prune", cwd=mirror, env=auth_env
-                )
-            else:
-                await run_exec(
-                    "git", "clone", "--mirror", spec.url, str(mirror), env=auth_env
-                )
+            lock = FileLock(str(self.repo_cache / f"{mirror_key}.lock"), timeout=120)
+            await asyncio.to_thread(lock.acquire)
+            try:
+                if mirror.exists():
+                    await run_exec(
+                        "git",
+                        "remote",
+                        "update",
+                        "--prune",
+                        cwd=mirror,
+                        env=auth_env,
+                    )
+                else:
+                    await run_exec(
+                        "git",
+                        "clone",
+                        "--mirror",
+                        spec.url,
+                        str(mirror),
+                        env=auth_env,
+                    )
+            finally:
+                await asyncio.to_thread(lock.release)
+
             destination = root / name
+            # Clone from the already-updated local mirror so repeated tasks avoid
+            # network transfer of repository objects.
             await run_exec(
                 "git",
                 "clone",
-                "--reference-if-able",
-                str(mirror),
                 "--branch",
                 spec.base_branch,
-                spec.url,
+                str(mirror),
                 str(destination),
-                env=auth_env,
+            )
+            await run_exec(
+                "git", "remote", "set-url", "origin", spec.url, cwd=destination
             )
             await run_exec(
                 "git", "checkout", "-b", f"agent/{task_id}", cwd=destination
+            )
+            await run_exec(
+                "git", "config", "user.name", "Minion Agent", cwd=destination
+            )
+            await run_exec(
+                "git",
+                "config",
+                "user.email",
+                "minion-agent@localhost",
+                cwd=destination,
             )
             result[name] = destination
         return result
@@ -170,8 +206,11 @@ class LocalEnvironmentProvider(EnvironmentProvider):
         workspace = Workspace(environment_id, root, repos)
         return workspace if await self.healthy(workspace) else None
 
-    async def release(self, workspace: Workspace) -> None:
-        shutil.rmtree(workspace.root, ignore_errors=True)
+    async def release(
+        self, workspace: Workspace, *, destroy_workspace: bool = True
+    ) -> None:
+        if destroy_workspace:
+            shutil.rmtree(workspace.root, ignore_errors=True)
 
     async def healthy(self, workspace: Workspace) -> bool:
         return workspace.root.exists() and all(
@@ -183,7 +222,11 @@ class LocalEnvironmentProvider(EnvironmentProvider):
 
 
 class DockerEnvironmentProvider(EnvironmentProvider):
-    """Reusable local Docker sandboxes approximating remote DevPods."""
+    """Warm containers with one isolated host slot per container.
+
+    A container can only see its own slot. Source trees from concurrent tasks are
+    therefore not visible across sandboxes, while dependency caches remain shared.
+    """
 
     POOL_LABEL = "minion.warm_pool=true"
 
@@ -200,8 +243,11 @@ class DockerEnvironmentProvider(EnvironmentProvider):
         }
         for path in self.dep_cache.values():
             path.mkdir(parents=True, exist_ok=True)
-        self._pool: asyncio.Queue[str] = asyncio.Queue()
-        self._containers: set[str] = set()
+
+        self.warm_root = settings.cache_root / "warm_slots"
+        self.warm_root.mkdir(parents=True, exist_ok=True)
+        self._pool: asyncio.Queue[WarmSlot] = asyncio.Queue()
+        self._slots: dict[str, WarmSlot] = {}
 
     async def _ensure_image(self) -> None:
         try:
@@ -215,9 +261,25 @@ class DockerEnvironmentProvider(EnvironmentProvider):
                 ) from None
         await run_exec("docker", "pull", self.settings.docker_image, timeout=1200)
 
-    async def _new_warm_container(self) -> str:
-        name = f"minion-warm-{uuid4().hex[:12]}"
-        root = self.settings.workspace_root.resolve()
+    def _archive_stale_slot_workspaces(self) -> None:
+        for slot_dir in self.warm_root.iterdir():
+            if not slot_dir.is_dir():
+                continue
+            for child in slot_dir.iterdir():
+                if not child.is_dir() or not child.name.startswith("env_"):
+                    continue
+                target = self.settings.workspace_root / child.name
+                if target.exists():
+                    shutil.rmtree(child, ignore_errors=True)
+                else:
+                    shutil.move(str(child), str(target))
+            shutil.rmtree(slot_dir, ignore_errors=True)
+
+    async def _new_slot(self) -> WarmSlot:
+        slot_id = uuid4().hex[:12]
+        slot_root = self.warm_root / slot_id
+        slot_root.mkdir(parents=True, exist_ok=False)
+        name = f"minion-warm-{slot_id}"
         args = [
             "docker",
             "run",
@@ -239,7 +301,7 @@ class DockerEnvironmentProvider(EnvironmentProvider):
             "--network",
             self.settings.docker_network,
             "-v",
-            f"{root}:/minion-workspaces",
+            f"{slot_root.resolve()}:/workspace",
             "-v",
             f"{self.dep_cache['pip'].resolve()}:/root/.cache/pip",
             "-v",
@@ -255,8 +317,9 @@ class DockerEnvironmentProvider(EnvironmentProvider):
             "infinity",
         ]
         await run_exec(*args, timeout=300)
-        self._containers.add(name)
-        return name
+        slot = WarmSlot(slot_id, name, slot_root)
+        self._slots[slot_id] = slot
+        return slot
 
     async def prepare(self) -> None:
         await self._ensure_image()
@@ -276,45 +339,85 @@ class DockerEnvironmentProvider(EnvironmentProvider):
         except EnvironmentError as exc:
             log.warning("warm_pool_discovery_failed", error=str(exc))
 
+        self._archive_stale_slot_workspaces()
         for _ in range(max(1, self.settings.warm_pool_size)):
-            name = await self._new_warm_container()
-            await self._pool.put(name)
+            await self._pool.put(await self._new_slot())
 
-    async def _claim(self) -> str:
+    async def _claim(self) -> WarmSlot:
         return await self._pool.get()
 
     async def allocate(
         self, task_id: str, repositories: list[RepositorySpec]
     ) -> Workspace:
-        workspace = await self.local.allocate(task_id, repositories)
+        slot = await self._claim()
+        environment_id = new_id("env")
+        root = slot.host_root / environment_id
+        root.mkdir(parents=True, exist_ok=False)
         try:
-            workspace.container_name = await self._claim()
-            workspace.container_workspace_root = (
-                f"/minion-workspaces/{workspace.environment_id}"
-            )
-            return workspace
+            repos = await self.local._populate(root, task_id, repositories)
         except BaseException:
-            await self.local.release(workspace)
+            shutil.rmtree(root, ignore_errors=True)
+            await self._pool.put(slot)
             raise
+
+        return Workspace(
+            environment_id=environment_id,
+            root=root,
+            repositories=repos,
+            container_name=slot.container_name,
+            container_workspace_root=f"/workspace/{environment_id}",
+            slot_id=slot.slot_id,
+        )
 
     async def attach(
         self, environment_id: str, repositories: list[RepositorySpec]
     ) -> Workspace | None:
-        workspace = await self.local.attach(environment_id, repositories)
-        if not workspace:
+        persistent = self.settings.workspace_root / environment_id
+        if not persistent.exists():
             return None
-        workspace.container_name = await self._claim()
-        workspace.container_workspace_root = f"/minion-workspaces/{environment_id}"
-        return workspace
 
-    async def release(self, workspace: Workspace) -> None:
-        container = workspace.container_name
-        await self.local.release(workspace)
-        if container and container in self._containers:
-            await self._pool.put(container)
+        slot = await self._claim()
+        target = slot.host_root / environment_id
+        try:
+            shutil.move(str(persistent), str(target))
+            repos = {repo_name(spec): target / repo_name(spec) for spec in repositories}
+            workspace = Workspace(
+                environment_id=environment_id,
+                root=target,
+                repositories=repos,
+                container_name=slot.container_name,
+                container_workspace_root=f"/workspace/{environment_id}",
+                slot_id=slot.slot_id,
+            )
+            if await self.healthy(workspace):
+                return workspace
+            raise EnvironmentError("recovered Docker workspace is unhealthy")
+        except BaseException:
+            if target.exists() and not persistent.exists():
+                shutil.move(str(target), str(persistent))
+            await self._pool.put(slot)
+            raise
+
+    async def release(
+        self, workspace: Workspace, *, destroy_workspace: bool = True
+    ) -> None:
+        slot = self._slots.get(workspace.slot_id or "")
+        if destroy_workspace:
+            shutil.rmtree(workspace.root, ignore_errors=True)
+        else:
+            target = self.settings.workspace_root / workspace.environment_id
+            if target.exists():
+                shutil.rmtree(target, ignore_errors=True)
+            if workspace.root.exists():
+                shutil.move(str(workspace.root), str(target))
+
+        if slot:
+            await self._pool.put(slot)
 
     async def healthy(self, workspace: Workspace) -> bool:
-        if not await self.local.healthy(workspace):
+        if not workspace.root.exists() or not all(
+            path.exists() for path in workspace.repositories.values()
+        ):
             return False
         if not workspace.container_name:
             return False
@@ -331,12 +434,12 @@ class DockerEnvironmentProvider(EnvironmentProvider):
             return False
 
     async def shutdown(self) -> None:
-        for container in list(self._containers):
+        for slot in list(self._slots.values()):
             try:
-                await run_exec("docker", "rm", "-f", container)
+                await run_exec("docker", "rm", "-f", slot.container_name)
             except EnvironmentError as exc:
                 log.warning("warm_container_shutdown_failed", error=str(exc))
-        self._containers.clear()
+        self._slots.clear()
 
 
 def build_environment_provider(settings: Settings) -> EnvironmentProvider:

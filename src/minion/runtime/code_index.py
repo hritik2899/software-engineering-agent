@@ -1,9 +1,4 @@
-"""Reusable repository context cache keyed by repository HEAD.
-
-This is intentionally lightweight: it gives the agent a fast architectural
-overview without rescanning the repository on every task. It can later be
-replaced by a richer graph/vector index without changing the agent interface.
-"""
+"""Reusable repository context cache keyed by remote repository and HEAD."""
 from __future__ import annotations
 
 import asyncio
@@ -34,7 +29,8 @@ class RepositoryContextIndex:
 
     async def _key(self, repo: Path) -> tuple[str, str]:
         head = (await self._git(repo, "rev-parse", "HEAD")).strip()
-        raw = f"{repo.resolve()}::{head}".encode()
+        remote = (await self._git(repo, "config", "--get", "remote.origin.url")).strip()
+        raw = f"{remote}::{head}".encode()
         return hashlib.sha256(raw).hexdigest(), head
 
     async def overview(self, repo: Path) -> dict[str, Any]:
@@ -97,8 +93,8 @@ class RepositoryContextIndex:
                 stripped.startswith("import ")
                 or stripped.startswith("from ")
                 or " require(" in stripped
-                or " from "" in stripped
                 or " from '" in stripped
+                or ' from "' in stripped
                 or stripped.startswith("#include")
             ):
                 hints.append(stripped)
