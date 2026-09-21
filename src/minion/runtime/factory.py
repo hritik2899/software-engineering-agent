@@ -18,7 +18,11 @@ def build_agent(
     context = ContextManager(settings, db, bus)
     return CodingAgent(
         llm=OpenAIClient(settings),
-        tools=ToolRegistry(workspace, settings.command_timeout_seconds),
+        tools=ToolRegistry(
+            workspace,
+            settings.command_timeout_seconds,
+            cache_root=settings.cache_root,
+        ),
         context=context,
         events=EventStore(db, bus),
         max_steps=settings.max_agent_steps,

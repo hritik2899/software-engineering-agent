@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from typing import Any
 
 from minion.errors import ToolExecutionError
 from minion.git_auth import safe_child_environment
+from minion.runtime.code_index import RepositoryContextIndex
 from minion.runtime.workspace import Workspace
 
 
@@ -45,9 +47,18 @@ def _safe_path(repo: Path, relative: str) -> Path:
 
 
 class ToolRegistry:
-    def __init__(self, workspace: Workspace, command_timeout: int = 600):
+    def __init__(
+        self,
+        workspace: Workspace,
+        command_timeout: int = 600,
+        *,
+        cache_root: Path | None = None,
+    ):
         self.workspace = workspace
         self.command_timeout = command_timeout
+        self.index = RepositoryContextIndex(
+            cache_root or (workspace.root.parent / "cache")
+        )
         self._tools: dict[str, Tool] = {}
         self._register_builtin_tools()
 
@@ -61,7 +72,13 @@ class ToolRegistry:
             return ToolResult(False, f"unknown tool: {name}")
         try:
             return await tool.handler(arguments)
-        except (OSError, ValueError, KeyError, ToolExecutionError) as exc:
+        except (
+            OSError,
+            RuntimeError,
+            ValueError,
+            KeyError,
+            ToolExecutionError,
+        ) as exc:
             return ToolResult(False, f"{type(exc).__name__}: {exc}")
 
     def _repo(self, args: dict[str, Any]) -> Path:
@@ -111,6 +128,16 @@ class ToolRegistry:
         return ToolResult(process.returncode == 0, output[-30000:])
 
     def _register_builtin_tools(self) -> None:
+        async def repository_overview(args: dict[str, Any]) -> ToolResult:
+            payload = await self.index.overview(self._repo(args))
+            return ToolResult(True, json.dumps(payload, indent=2))
+
+        async def dependency_hints(args: dict[str, Any]) -> ToolResult:
+            payload = await self.index.dependency_hints(
+                self._repo(args), args["path"]
+            )
+            return ToolResult(True, json.dumps(payload, indent=2))
+
         async def list_files(args: dict[str, Any]) -> ToolResult:
             repo = self._repo(args)
             base = _safe_path(repo, args.get("path", "."))
@@ -192,6 +219,18 @@ class ToolRegistry:
             }
 
         self._tools = {
+            "repository_overview": Tool(
+                "repository_overview",
+                "Get cached repository structure and language/build metadata.",
+                schema({}, []),
+                repository_overview,
+            ),
+            "dependency_hints": Tool(
+                "dependency_hints",
+                "Inspect import/include dependency hints for one source file.",
+                schema({"path": {"type": "string"}}, ["path"]),
+                dependency_hints,
+            ),
             "list_files": Tool(
                 "list_files",
                 "List repository files.",
