@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from minion.domain import TaskStatus, utcnow
@@ -30,7 +30,7 @@ class TaskRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    session: Mapped["SessionRow"] = relationship(back_populates="task", uselist=False)
+    session: Mapped[SessionRow] = relationship(back_populates="task", uselist=False)
 
 
 class SessionRow(Base):
@@ -42,6 +42,7 @@ class SessionRow(Base):
     current_plan: Mapped[list[str]] = mapped_column(JSON, default=list)
     active_constraints: Mapped[list[str]] = mapped_column(JSON, default=list)
     last_event_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    last_compacted_sequence: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -50,9 +51,7 @@ class SessionRow(Base):
 
 class EventRow(Base):
     __tablename__ = "events"
-    __table_args__ = (
-        Index("ix_events_task_sequence", "task_id", "sequence", unique=True),
-    )
+    __table_args__ = (Index("ix_events_task_sequence", "task_id", "sequence", unique=True),)
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
@@ -64,11 +63,7 @@ class EventRow(Base):
 
 
 class EnvironmentLeaseRow(Base):
-    """Maps a logical environment ID to its active provider/workspace.
-
-    A lease is replaceable.  If a machine dies, the task/session remain and a new
-    environment lease can be attached during recovery.
-    """
+    __tablename__ = "environment_leases"
 
     id: Mapped[str] = mapped_column(String(120), primary_key=True)
     task_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
@@ -79,3 +74,28 @@ class EnvironmentLeaseRow(Base):
     last_heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TaskLeaseRow(Base):
+    __tablename__ = "task_leases"
+
+    task_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(120), index=True)
+    expires_at_epoch: Mapped[float] = mapped_column(Float, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CheckpointRow(Base):
+    __tablename__ = "checkpoints"
+    __table_args__ = (
+        Index("ix_checkpoints_task_repo_created", "task_id", "repo_name", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(80), index=True)
+    session_id: Mapped[str] = mapped_column(String(80), index=True)
+    repo_name: Mapped[str] = mapped_column(String(240))
+    base_branch: Mapped[str] = mapped_column(String(240))
+    commit_sha: Mapped[str] = mapped_column(String(80))
+    binary_patch: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

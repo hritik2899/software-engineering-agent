@@ -2,11 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, hardening-audit]
   pull_request:
 
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,7 +14,23 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -e ".[dev]"
-      - run: python -m compileall -q src
-      - run: ruff check src tests
-      - run: pytest -q
+
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: Compile
+        run: python -m compileall -q src tests scripts migrations
+
+      - name: Lint
+        run: ruff check src tests scripts migrations
+
+      - name: Unit and integration tests
+        run: pytest -q
+
+      - name: Full local control-plane smoke test
+        run: python scripts/smoke_test.py
+
+      - name: Validate fresh Alembic migration
+        env:
+          MINION_DATABASE_URL: sqlite+aiosqlite:///./migration-ci.db
+        run: alembic upgrade head

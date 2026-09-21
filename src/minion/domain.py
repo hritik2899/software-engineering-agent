@@ -1,16 +1,7 @@
-"""Domain contracts shared by API, orchestration and runtime layers.
-
-IDs intentionally model different lifetimes:
-* task_id        -> WHAT engineering work exists.
-* session_id     -> WHAT the agent has learned/done so far.
-* environment_id -> WHERE the code currently executes.
-
-A task can survive a dead environment; recovery simply points the same logical
-work/session at a replacement environment.
-"""
+"""Domain contracts shared by API, orchestration and runtime layers."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
@@ -23,7 +14,7 @@ def new_id(prefix: str) -> str:
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class TaskStatus(StrEnum):
@@ -52,11 +43,15 @@ class EventType(StrEnum):
     TASK_CREATED = "task.created"
     TASK_QUEUED = "task.queued"
     TASK_STARTED = "task.started"
+    TASK_PAUSED = "task.paused"
+    TASK_RESUMED = "task.resumed"
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
     TASK_CANCELLED = "task.cancelled"
+    TASK_RECOVERED = "task.recovered"
     ENVIRONMENT_ALLOCATED = "environment.allocated"
     ENVIRONMENT_READY = "environment.ready"
+    ENVIRONMENT_HEARTBEAT = "environment.heartbeat"
     AGENT_STEP = "agent.step"
     AGENT_MESSAGE = "agent.message"
     USER_MESSAGE = "user.message"
@@ -103,6 +98,7 @@ class SessionView(BaseModel):
     current_plan: list[str] = Field(default_factory=list)
     active_constraints: list[str] = Field(default_factory=list)
     last_event_sequence: int = 0
+    last_compacted_sequence: int = 0
     created_at: datetime
     updated_at: datetime
 

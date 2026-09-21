@@ -1,4 +1,4 @@
-.PHONY: install run infra sandbox test lint
+.PHONY: install run infra sandbox migrate smoke test lint verify
 
 install:
 	python -m pip install -e ".[dev]"
@@ -12,9 +12,17 @@ infra:
 sandbox:
 	docker build -f Dockerfile.sandbox -t minion-sandbox:latest .
 
+migrate:
+	alembic upgrade head
+
+smoke:
+	python scripts/smoke_test.py
+
 test:
 	pytest -q
 
 lint:
-	ruff check src tests
-	python -m compileall -q src
+	ruff check src tests scripts migrations
+	python -m compileall -q src scripts migrations
+
+verify: lint test smoke

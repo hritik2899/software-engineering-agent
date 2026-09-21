@@ -1,90 +1,127 @@
 # Minion-Style Software Engineering Agent
 
-A runnable, production-oriented reference implementation of a **remote agentic
-software-engineering platform**. It converts a natural-language engineering task
-into repository investigation, code edits, build/test execution, Git checkpoints
-and optionally GitHub pull requests.
+A runnable reference implementation of a distributed remote coding-agent platform.
+It takes a natural-language engineering task, checks out one or more repositories,
+builds task-specific context, lets an autonomous agent inspect/edit/test the code,
+persists progress, survives control-plane failures, and can publish pull requests.
 
-This project was built specifically as an architecture-learning codebase: every
-important Minion-style concept discussed in the design is represented by a concrete
-interface, model or execution path.
+> This is **not Uber source code** and does not claim proprietary Minion internals.
+> It is a production-oriented educational implementation of the architecture
+> discussed in this repository.
 
-> This is an educational reference implementation. It is not Uber source code and
-> does not claim to reproduce proprietary Minion internals.
+## Start here
 
-## Features
+- [Feature matrix: exactly what is and is not implemented](docs/FEATURE_MATRIX.md)
+- [High-Level Architecture](docs/ARCHITECTURE.md)
+- [Low-Level Design](docs/LLD.md)
 
-- FastAPI control plane and REST API
-- persistent task/session/event state with SQLite or PostgreSQL
-- asynchronous Redis or in-memory task queue
-- explicit task state machine + optimistic idempotency
-- local and Docker-isolated execution environments
-- replaceable `environmentId` with startup reconciliation/recovery
-- multi-repository workspaces
-- OpenAI-backed autonomous coding-agent loop
-- bounded context manager over durable history
-- file, search, shell/build/test and Git tools
-- Git checkpoint recovery boundary
-- replayable bidirectional WebSocket event stream
-- mid-execution user instructions
-- repository mirror cache
-- shared pip/npm/Maven/Gradle dependency caches
-- warmed Docker image
-- optional GitHub branch push + pull-request publishing
-- CI tests and architecture/LLD documentation
+## Implemented system
 
-## Read these first
+```text
+UI / API
+   |
+FastAPI
+   +-- SQL task/session/event/checkpoint store
+   +-- Redis Streams work queue (optional)
+   +-- Redis Pub/Sub live events (optional)
+   |
+Orchestrator
+   +-- distributed execution lease + heartbeat
+   +-- recovery scanner
+   +-- pause/resume/cancel/retry
+   +-- EnvironmentProvider
+          |
+          +-- local
+          +-- per-task Docker
+          +-- single-tenant warm Docker pool
+                    |
+               CodingAgent
+                    |
+              ContextManager
+        +-----------+------------+
+        |                        |
+ durable memory          repo+commit index
+        |                        |
+        +-----------+------------+
+                    |
+                   LLM
+                    |
+                ToolRegistry
+          files / search / shell / Git
+                    |
+             verification gate
+                    |
+          durable Git checkpoint
+                    |
+               optional PR
+```
 
-1. [Architecture / HLD](docs/ARCHITECTURE.md)
-2. [Low-Level Design](docs/LLD.md)
-3. `src/minion/domain.py` — task/session/environment mental model
-4. `src/minion/orchestrator.py` — lifecycle, scheduling, recovery
-5. `src/minion/runtime/agent.py` — reasoning/action loop
-6. `src/minion/runtime/context.py` — model context construction
-7. `src/minion/runtime/workspace.py` — environment + repo caches
-8. `src/minion/runtime/tools.py` — real code/shell/Git actions
-9. `src/minion/events.py` — durable replay + live streaming
-10. `src/minion/api.py` — external control plane
+## Quickest proof that it runs
 
-## Quick start
-
-Requires Python 3.11+ and Git.
+The smoke test does **not** require OpenAI, Redis, Docker or internet access:
 
 ```bash
 git clone https://github.com/hritik2899/software-engineering-agent.git
 cd software-engineering-agent
-cp .env.example .env
+
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+
+make smoke
 ```
 
-Put your API key in `.env`:
+It creates a temporary Git repository and exercises:
 
-```bash
-OPENAI_API_KEY=...
-MINION_LLM_MODEL=gpt-5
+```text
+task -> queue -> orchestrator -> task lease -> checkout -> code index
+     -> mock LLM -> tools -> file edit -> verification -> Git diff
+     -> durable checkpoint -> events -> COMPLETED
 ```
 
-Run:
+Run the complete verification suite:
 
 ```bash
+make verify
+```
+
+## Run the API
+
+```bash
+cp .env.example .env
 uvicorn minion.api:app --reload
 ```
 
-Open API docs:
+Open:
 
 ```text
 http://localhost:8000/docs
 ```
 
-### Create a task
+The default example configuration uses:
+
+```text
+MINION_LLM_PROVIDER=mock
+MINION_ENVIRONMENT_PROVIDER=local
+```
+
+so the control plane is runnable before adding external credentials.
+
+To use a real model:
+
+```text
+MINION_LLM_PROVIDER=openai
+MINION_LLM_MODEL=<your supported OpenAI model>
+OPENAI_API_KEY=...
+```
+
+## Submit a task
 
 ```bash
 curl -X POST http://localhost:8000/tasks \
   -H 'content-type: application/json' \
   -d '{
-    "instruction": "Add a README section explaining how to run the tests",
+    "instruction": "Add input validation and regression tests",
     "repositories": [{
       "url": "https://github.com/YOUR_USER/YOUR_TEST_REPO.git",
       "base_branch": "main",
@@ -94,49 +131,32 @@ curl -X POST http://localhost:8000/tasks \
   }'
 ```
 
-Use a disposable repository first.
+Use a disposable repository while learning.
 
-### Watch events
+## Inspect and control a running task
 
 ```bash
+curl http://localhost:8000/tasks/TASK_ID
 curl 'http://localhost:8000/tasks/TASK_ID/events?after=0'
+
+curl -X POST http://localhost:8000/tasks/TASK_ID/messages \
+  -H 'content-type: application/json' \
+  -d '{"message":"Do not modify the legacy implementation; use the new adapter."}'
+
+curl -X POST http://localhost:8000/tasks/TASK_ID/pause
+curl -X POST http://localhost:8000/tasks/TASK_ID/resume
+curl -X POST http://localhost:8000/tasks/TASK_ID/cancel
+curl -X POST http://localhost:8000/tasks/TASK_ID/retry
 ```
 
-WebSocket:
+Live stream:
 
 ```text
 ws://localhost:8000/tasks/TASK_ID/events/ws?after=0
 ```
 
-### Redirect an agent while it runs
-
-```bash
-curl -X POST http://localhost:8000/tasks/TASK_ID/messages \
-  -H 'content-type: application/json' \
-  -d '{"message":"Do not modify the legacy implementation; use the new adapter."}'
-```
-
-The message is durably appended to the task event stream and appears in the next
-context window.
-
-## Docker sandbox mode
-
-Build the sandbox image:
-
-```bash
-make sandbox
-```
-
-Then set:
-
-```bash
-MINION_ENVIRONMENT_PROVIDER=docker
-MINION_DOCKER_IMAGE=minion-sandbox:latest
-```
-
-In Docker mode repository files are bind-mounted but arbitrary build/test commands
-run inside the isolated container. Shared dependency cache mounts accelerate repeat
-tasks.
+If `MINION_API_KEY` is configured, REST requests need
+`X-Minion-Api-Key`; WebSocket clients send the same header.
 
 ## PostgreSQL + Redis
 
@@ -144,42 +164,119 @@ tasks.
 docker compose up -d postgres redis
 ```
 
-Then:
+Configure:
 
-```bash
+```text
 MINION_DATABASE_URL=postgresql+asyncpg://minion:minion@localhost:5432/minion
 MINION_REDIS_URL=redis://localhost:6379/0
 ```
 
-Redis is an accelerator/queue, not the source of truth.
+For a migration-managed deployment:
 
-## PR publishing
+```bash
+alembic upgrade head
+```
 
-Set `GITHUB_TOKEN`, make sure Git credentials can push the task branch, and submit
-with `"publish_pr": true`. The LLM never receives the GitHub token; publication is
-owned by the backend `GitHubPublisher`.
+The pre-0.2 educational release did not have Alembic. If you created an old local
+`minion.db`, delete that throwaway DB before running 0.2, or migrate/stamp it
+manually instead of expecting `create_all()` to alter existing columns.
 
-## Six-commit learning path
+## Docker sandbox
 
-The history is intentionally structured as six conceptual layers:
+Build the polyglot learning sandbox:
 
-1. repository initialization
-2. configuration + domain contracts
-3. durable tasks/sessions/events
-4. agent runtime + tools/context
-5. orchestration + Docker/caches/recovery/API
-6. hardening + CI/tests/HLD/LLD/runbook
+```bash
+make sandbox
+```
 
-Read the commits in order to reconstruct the platform the same way you would design
-it in a system-design interview.
+Then set:
 
-## Important production notes
+```text
+MINION_ENVIRONMENT_PROVIDER=docker
+MINION_DOCKER_IMAGE=minion-sandbox:latest
+```
 
-The default local provider is **not a security sandbox**. Use Docker for untrusted
-commands and implement a Kubernetes/DevPod `EnvironmentProvider` for a real remote
-fleet. Production deployments should add organization IAM, network egress controls,
-resource quotas, secrets broker, migrations, distributed tracing/metrics, rate
-limits and a durable queue with delivery/visibility semantics.
+This gives every task a separate Docker container and task workspace. The image
+contains Python, Node/npm, Java/Maven and Go tooling; real production systems
+normally use toolchain-specific images.
 
-The interfaces in this repository are intentionally designed so those infrastructure
-upgrades do not require rewriting the coding agent.
+### Warm pool experiment
+
+```text
+MINION_ENVIRONMENT_PROVIDER=docker_pool
+MINION_WARM_POOL_SIZE=2
+```
+
+This pre-starts Docker containers to remove container startup from the task's hot
+path. It is intentionally **single-tenant only** because pooled containers mount
+the workspace parent. Do not treat it as a multi-tenant security boundary.
+
+## Caching
+
+The implementation has distinct caches for distinct costs:
+
+- bare Git repository mirrors + reference clones;
+- warmed execution images/containers;
+- pip/npm/Maven/Gradle dependency caches;
+- repository context index keyed by origin + commit SHA;
+- durable session memory, which avoids starting understanding from zero after a
+  control-plane restart.
+
+These are the mechanisms behind the latency-reduction architecture discussion.
+This repository does not invent proprietary latency measurements.
+
+## GitHub PR publishing
+
+Set `GITHUB_TOKEN` and submit with `"publish_pr": true`.
+
+The token is used only by backend checkout/push/PR code. It is never exposed as an
+agent tool or placed in the model context.
+
+The runtime refuses to complete an edited task until it has successfully:
+
+1. run a verification command;
+2. inspected Git state;
+3. created a Git checkpoint whose binary patch is persisted.
+
+That invariant ensures the branch has a durable commit before PR publication.
+
+## Observability
+
+- structured JSON logs;
+- `GET /health`;
+- `GET /ready`;
+- `GET /metrics` in Prometheus format;
+- task/environment allocation and duration metrics;
+- persistent event history for audit/replay.
+
+## Recommended reading order
+
+1. `docs/FEATURE_MATRIX.md`
+2. `docs/ARCHITECTURE.md`
+3. `src/minion/domain.py`
+4. `src/minion/models.py`
+5. `src/minion/orchestrator.py`
+6. `src/minion/runtime/workspace.py`
+7. `src/minion/runtime/intelligence.py`
+8. `src/minion/runtime/context.py`
+9. `src/minion/runtime/agent.py`
+10. `src/minion/runtime/tools.py`
+11. `src/minion/events.py`
+12. `src/minion/api.py`
+
+Read the repository together with the architecture docs: every important box in the
+HLD maps to a concrete class/interface.
+
+## What production still needs
+
+The code is intentionally honest about its boundary. A company deployment should
+still replace or extend:
+
+- local Docker with a tenant-isolated Kubernetes/DevPod/cloud provider;
+- local authorization policy with enterprise IAM/repository ACLs;
+- local secret handling with a secrets broker;
+- lightweight symbol/import indexing with compiler-grade call graphs/vector search
+  if those capabilities are required;
+- local metrics endpoints with the organization's tracing/SLO stack.
+
+See the feature matrix for the precise status of each capability.

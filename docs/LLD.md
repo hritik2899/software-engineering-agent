@@ -1,119 +1,206 @@
 # Low-Level Design
 
-## Component map
+## Core objects
+
+```text
+TaskRow
+  id
+  session_id
+  environment_id
+  instruction
+  repositories[]
+  status
+  version          <- optimistic state transition guard
+  result/error
+
+SessionRow
+  id
+  task_id
+  summary
+  current_plan[]
+  active_constraints[]
+  last_event_sequence
+  last_compacted_sequence
+
+TaskLeaseRow
+  task_id
+  owner_id
+  expires_at_epoch
+
+EnvironmentLeaseRow
+  environment_id
+  task_id
+  provider/status
+  workspace metadata
+  last heartbeat
+
+CheckpointRow
+  task/session/repo
+  commit SHA
+  binary patch
+```
+
+## Control-plane classes
 
 ```text
 FastAPI
- |
- +-- Orchestrator
- |    +-- WorkQueue
- |    +-- AuthorizationPolicy
- |    +-- EnvironmentProvider
- |    +-- GitHubPublisher
- |
- +-- TaskRepository
- +-- SessionRepository
- +-- EventStore
- +-- EventBus
+  |
+  +-- Orchestrator
+  |     +-- AuthorizationPolicy
+  |     +-- WorkQueue
+  |     +-- TaskLeaseRepository
+  |     +-- EnvironmentProvider
+  |     +-- GitHubPublisher
+  |
+  +-- TaskRepository
+  +-- SessionRepository
+  +-- EventStore
+  +-- EventBus
+```
 
-EnvironmentProvider
- |
- +-- LocalEnvironmentProvider
- +-- DockerEnvironmentProvider
- |
- +--> Workspace
-       +-- environment_id
-       +-- root
-       +-- repositories
-       +-- container_name
+### Orchestrator responsibility
+
+The orchestrator answers **when and where** work runs:
+
+- queue consumption;
+- bounded concurrency;
+- distributed task lease acquisition;
+- heartbeat renewal;
+- environment allocate/attach/replace;
+- startup/periodic recovery;
+- pause/resume/cancel/retry;
+- PR publication;
+- terminal cleanup.
+
+It does not decide which file to edit.
+
+## Execution-plane classes
+
+```text
+Workspace
+  environment_id
+  repositories{name -> path}
+  base_branches{name -> branch}
+  optional container identity
 
 CodingAgent
- |
- +-- ContextManager
- +-- LLMClient
- +-- ToolRegistry
-      +-- list_files
-      +-- read_file
-      +-- write_file
-      +-- search_code
-      +-- run_command
-      +-- git_status
-      +-- git_diff
-      +-- checkpoint
+  |
+  +-- AgentProfile/router
+  +-- ContextManager
+  +-- LLMClient
+  +-- ToolRegistry
+          |
+          +-- list_files
+          +-- read_file
+          +-- write_file
+          +-- search_code
+          +-- search_index
+          +-- dependency_neighbors
+          +-- run_command
+          +-- update_plan
+          +-- git_status
+          +-- git_diff
+          +-- checkpoint
 ```
 
-## Task state machine
+## Agent vs runtime
+
+**Agent:** chooses the next engineering action.
+
+**Runtime:** executes tools, owns context/persistence/control signals and mediates the
+environment.
 
 ```text
-CREATED -> QUEUED -> PROVISIONING -> RUNNING -> COMPLETED
-                     |              |
-                     |              +-> WAITING_FOR_USER -> RUNNING
-                     |              |
-                     +--------------+-> FAILED -> QUEUED (explicit retry)
-
-Any active state -> CANCELLING -> CANCELLED
+durable memory + repo context
+            |
+       ContextManager
+            |
+            v
+           LLM
+            |
+       next tool call
+            |
+       ToolRegistry
+            |
+ filesystem / shell / Git
+            |
+        observation
+            +-----------> durable event log
 ```
 
-Optimistic `version` updates prevent duplicate queue deliveries from starting the
-same logical task twice.
+## Completion invariant
 
-## Core tables
+For a task that calls `write_file`, the runtime will not accept model completion
+until all three are true:
 
-### tasks
-`id, session_id, environment_id, user_id, instruction, status, repositories,
-publish_pr, version, error, result, created_at, updated_at`
+1. a command has run successfully (verification);
+2. Git was inspected;
+3. a checkpoint commit and persisted patch were created.
 
-### agent_sessions
-`id, task_id, summary, current_plan, active_constraints, last_event_sequence,
-created_at, updated_at`
+Prompt instructions alone are not considered a sufficient correctness mechanism.
 
-### events
-`id, task_id, session_id, sequence, type, payload, created_at`
+## Event sequencing
 
-The unique `(task_id, sequence)` index provides replay ordering.
+`EventStore.append()` atomically increments the session sequence with
+`UPDATE ... RETURNING`, inserts the event, commits it, then publishes it live.
 
-## Agent versus runtime
+SQL is authoritative. Redis Pub/Sub only lowers UI latency. A reconnecting client
+can always request `events?after=N`.
 
-The **agent** answers: *what should I do next?*
+## Pause and redirection
 
-The **runtime** answers: *how do I execute that safely and preserve enough state to
-continue?*
+A user instruction is both:
+
+- an immutable event;
+- an active durable instruction in `SessionRow.active_constraints`.
+
+Pause sets task state to `WAITING_FOR_USER`. The agent checks that state between
+reasoning/tool steps and waits. Resume changes the state back to RUNNING.
+
+## Checkpoint recovery
+
+`checkpoint` performs:
 
 ```text
-ContextManager -> LLM -> tool decision
-                      |
-                      v
-                ToolRegistry
-                      |
-        +-------------+-------------+
-        |             |             |
-      files          shell          git
+git add/commit
+   |
+git diff --binary origin/base...HEAD
+   |
+CheckpointRow(binary_patch)
 ```
 
-## Adding a real DevPod provider
+If a workspace is lost:
 
-Implement:
-
-```python
-class DevPodEnvironmentProvider(EnvironmentProvider):
-    async def prepare(self): ...
-    async def allocate(self, task_id, repositories): ...
-    async def attach(self, environment_id, repositories): ...
-    async def healthy(self, workspace): ...
-    async def release(self, workspace): ...
+```text
+new checkout
+   |
+latest patch per repository
+   |
+git apply --index --3way
+   |
+recovery commit
+   |
+persistent session + event history
+   |
+agent continues
 ```
 
-The rest of the control plane and agent runtime does not change. A production
-implementation would map `environment_id` to the DevPod/Kubernetes workload ID,
-mount a persistent or checkpointed workspace, use scoped repo credentials, emit
-heartbeats, and maintain a warm pool keyed by environment/toolchain class.
+## Environment providers
 
-## Security boundaries
+- `LocalEnvironmentProvider`: learning/CI only; not sandboxed.
+- `DockerEnvironmentProvider`: per-task container and per-task workspace mount.
+- `PooledDockerEnvironmentProvider`: pre-started single-tenant warm-container
+  experiment. It shares the workspace parent and is explicitly not multi-tenant.
 
-* API/IAM decides which user may access which repositories.
-* LLM never receives GitHub credentials directly.
-* PR publishing is a separate backend service.
-* Filesystem tools reject path escape.
-* Docker provider executes arbitrary build/test shell commands inside the sandbox.
-* Production should additionally apply network egress policy, CPU/memory quotas,
-  seccomp/AppArmor, secret scoping and auditable tool policies.
+A production DevPod/Kubernetes provider implements the same five operations:
+`prepare`, `allocate`, `attach`, `healthy`, `release`.
+
+## Security principles
+
+- repository/API authorization happens before scheduling;
+- GitHub credentials stay in backend Git operations, not LLM tools;
+- filesystem paths are confined to the selected repository;
+- untrusted commands should use an isolated environment provider;
+- Docker sandbox applies CPU/memory/PID limits and `no-new-privileges`;
+- production still needs network policy, IAM, secret brokering and tenant-isolated
+  storage.

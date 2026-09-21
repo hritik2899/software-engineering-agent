@@ -2,41 +2,54 @@ from pathlib import Path
 
 import pytest
 
+from minion.runtime.intelligence import RepositoryIntelligence
 from minion.runtime.tools import ToolRegistry
 from minion.runtime.workspace import Workspace
 
 
 @pytest.mark.asyncio
-async def test_read_write_and_path_confinement(tmp_path: Path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    workspace = Workspace("env_test", tmp_path, {"repo": repo})
-    tools = ToolRegistry(workspace)
-
-    result = await tools.execute(
-        "write_file", {"repo": "repo", "path": "src/example.txt", "content": "hello"}
+async def test_read_write_shell_and_path_confinement(
+    settings,
+    git_repo: Path,
+    tmp_path: Path,
+) -> None:
+    workspace = Workspace(
+        "env_test",
+        tmp_path,
+        {"demo": git_repo},
+        {"demo": "main"},
     )
-    assert result.ok
+    intelligence = RepositoryIntelligence(settings, workspace)
+    await intelligence.prepare()
+    tools = ToolRegistry(workspace, intelligence)
 
-    result = await tools.execute(
-        "read_file", {"repo": "repo", "path": "src/example.txt"}
+    written = await tools.execute(
+        "write_file",
+        {
+            "repo": "demo",
+            "path": "src/example.txt",
+            "content": "hello",
+        },
     )
-    assert result.ok
-    assert "hello" in result.output
+    assert written.ok
+
+    read = await tools.execute(
+        "read_file",
+        {"repo": "demo", "path": "src/example.txt"},
+    )
+    assert read.ok
+    assert "hello" in read.output
 
     escaped = await tools.execute(
-        "read_file", {"repo": "repo", "path": "../outside.txt"}
+        "read_file",
+        {"repo": "demo", "path": "../outside.txt"},
     )
     assert not escaped.ok
     assert "escapes repository" in escaped.output
 
-
-@pytest.mark.asyncio
-async def test_shell_runs_in_repo(tmp_path: Path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    workspace = Workspace("env_test", tmp_path, {"repo": repo})
-    tools = ToolRegistry(workspace)
-    result = await tools.execute("run_command", {"repo": "repo", "command": "pwd"})
-    assert result.ok
-    assert str(repo) in result.output
+    shell = await tools.execute(
+        "run_command",
+        {"repo": "demo", "command": "pwd"},
+    )
+    assert shell.ok
+    assert str(git_repo) in shell.output

@@ -1,12 +1,12 @@
 from minion.domain import RepositorySpec, TaskCreate
 
 
-def test_task_can_use_default_repo_at_api_layer():
+def test_task_can_use_default_repo_at_api_layer() -> None:
     task = TaskCreate(instruction="fix the failing test")
     assert task.repositories == []
 
 
-def test_multi_repo_task():
+def test_multi_repo_task() -> None:
     task = TaskCreate(
         instruction="update schema and consumer",
         repositories=[
