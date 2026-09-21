@@ -1,8 +1,4 @@
-"""Durable event log plus live fan-out.
-
-WebSockets are transport, not truth. Events are persisted with monotonically
-increasing sequence numbers so clients can reconnect and replay missed history.
-"""
+"""Durable event log plus local/Redis live fan-out."""
 from __future__ import annotations
 
 import asyncio
@@ -10,6 +6,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterator
 from typing import Any
 
+from redis.asyncio import Redis
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,21 +15,54 @@ from minion.models import EventRow, SessionRow
 
 
 class EventBus:
-    def __init__(self) -> None:
+    """Live transport.
+
+    SQL events remain authoritative. With Redis configured, Pub/Sub lets a UI
+    connected to API instance A receive events produced by worker instance B.
+    """
+
+    def __init__(self, redis_url: str | None = None) -> None:
+        self.redis = (
+            Redis.from_url(redis_url, decode_responses=True) if redis_url else None
+        )
         self._subscribers: dict[str, set[asyncio.Queue[AgentEvent]]] = defaultdict(set)
         self._lock = asyncio.Lock()
 
+    @staticmethod
+    def _channel(task_id: str) -> str:
+        return f"minion:events:{task_id}"
+
     async def publish_live(self, event: AgentEvent) -> None:
+        if self.redis:
+            await self.redis.publish(self._channel(event.task_id), event.model_dump_json())
+            return
+
         async with self._lock:
             subscribers = list(self._subscribers[event.task_id])
         for queue in subscribers:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
-                # Slow clients recover from the durable log on reconnect.
                 pass
 
     async def subscribe(self, task_id: str) -> AsyncIterator[AgentEvent]:
+        if self.redis:
+            pubsub = self.redis.pubsub()
+            await pubsub.subscribe(self._channel(task_id))
+            try:
+                while True:
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=1.0
+                    )
+                    if message and message.get("data"):
+                        yield AgentEvent.model_validate_json(message["data"])
+                    else:
+                        await asyncio.sleep(0.05)
+            finally:
+                await pubsub.unsubscribe(self._channel(task_id))
+                await pubsub.aclose()
+            return
+
         queue: asyncio.Queue[AgentEvent] = asyncio.Queue(maxsize=256)
         async with self._lock:
             self._subscribers[task_id].add(queue)
@@ -42,6 +72,10 @@ class EventBus:
         finally:
             async with self._lock:
                 self._subscribers[task_id].discard(queue)
+
+    async def close(self) -> None:
+        if self.redis:
+            await self.redis.aclose()
 
 
 class EventStore:
@@ -56,8 +90,6 @@ class EventStore:
         event_type: EventType,
         payload: dict[str, Any] | None = None,
     ) -> AgentEvent:
-        # Row locking serializes sequence allocation in PostgreSQL. SQLite ignores
-        # FOR UPDATE but serializes writes at the database level.
         stmt = select(SessionRow).where(SessionRow.id == session_id).with_for_update()
         session = (await self.db.scalars(stmt)).one_or_none()
         if not session:

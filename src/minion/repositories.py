@@ -96,6 +96,9 @@ class TaskRepository:
             values["error"] = error
         if result is not None:
             values["result"] = result
+        if current == TaskStatus.FAILED and target == TaskStatus.QUEUED:
+            values["error"] = None
+            values["result"] = None
 
         stmt = (
             update(TaskRow)
