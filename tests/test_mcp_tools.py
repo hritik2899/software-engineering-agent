@@ -1,4 +1,9 @@
-"""MCP configuration tests without requiring a network server."""
+"""MCP trust-boundary tests.
+
+No network server is required here: configuration parsing verifies explicit
+operator-owned endpoints, safe names and HTTPS requirements for non-loopback MCP
+servers.
+"""
 from pathlib import Path
 
 import pytest

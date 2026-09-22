@@ -1,3 +1,9 @@
+"""Work-queue protocol tests.
+
+The in-memory implementation is used to verify the common prepare/put/get/ack/close
+contract without Redis; Redis-specific reliability is implemented behind the same
+WorkQueue interface.
+"""
 from minion.queue import InMemoryWorkQueue
 
 

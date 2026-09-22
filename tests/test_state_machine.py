@@ -1,3 +1,8 @@
+"""Task-state-machine tests.
+
+Legal transitions and terminal-state restrictions are tested separately from workers
+so queue retries and cancellation cannot silently widen lifecycle semantics.
+"""
 import pytest
 
 from minion.domain import TaskStatus

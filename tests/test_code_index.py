@@ -1,4 +1,9 @@
-"""Behavioral tests for persistent repository intelligence indexing."""
+"""Repository-intelligence tests.
+
+These tests prove content-addressed reuse across Git commits, symbol discovery,
+dependency resolution and reverse-impact analysis—the invariants that make
+pre-indexing an acceleration rather than repeated full parsing.
+"""
 import asyncio
 from pathlib import Path
 

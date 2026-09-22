@@ -1,3 +1,9 @@
+"""Alembic runtime environment.
+
+This file connects Alembic's migration runner to the same typed database URL and
+SQLAlchemy metadata used by the application. Production startup runs migrations
+before API/workers, so schema evolution is explicit rather than create_all-driven.
+"""
 from __future__ import annotations
 
 import asyncio

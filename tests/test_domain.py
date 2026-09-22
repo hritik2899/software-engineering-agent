@@ -1,3 +1,8 @@
+"""Domain-contract tests.
+
+These tests protect stable task/session/repository serialization and enum semantics so
+API, persistence and runtime layers keep speaking the same vocabulary.
+"""
 from minion.domain import RepositorySpec, TaskCreate
 
 

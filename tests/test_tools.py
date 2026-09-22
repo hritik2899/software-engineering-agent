@@ -1,4 +1,9 @@
-"""Tool-boundary tests: confinement, patching and shell policy."""
+"""Tool-boundary tests.
+
+The suite checks repository path confinement, shell working directory, deterministic
+command blocking and validated Git patch application—the most security-sensitive
+model-to-runtime boundary.
+"""
 import asyncio
 from pathlib import Path
 

@@ -1,4 +1,8 @@
-"""Tests for marker/keyword skill discovery and repository overrides."""
+"""Agent Skills tests.
+
+These tests verify scope discovery, repository-skill precedence and automatic
+activation from repository markers/task keywords without executing repository code.
+"""
 from pathlib import Path
 
 from minion.runtime.skills import SkillManager

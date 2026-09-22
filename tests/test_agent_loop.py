@@ -1,3 +1,9 @@
+"""Coding-agent loop integration test.
+
+A scripted model drives plan → edit → verify → diff → finish so the test proves the
+runtime records real tool evidence and persists working memory without requiring an
+external model API.
+"""
 import subprocess
 from pathlib import Path
 
