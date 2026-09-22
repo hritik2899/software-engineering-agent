@@ -1,4 +1,10 @@
-"""Distributed task orchestration."""
+"""Distributed task orchestrator.
+
+The orchestrator owns task lifecycle: consume an at-least-once queue item, recover or
+allocate a sandbox, pre-index repositories, construct the agent runtime, heartbeat
+the environment, publish results and persist terminal state. Duplicate delivery is
+expected; correctness comes from durable state plus optimistic transitions.
+"""
 from __future__ import annotations
 
 import asyncio

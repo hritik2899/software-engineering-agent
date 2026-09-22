@@ -1,7 +1,8 @@
-"""LLM boundary.
+"""Model-provider boundary.
 
-The agent depends on this protocol rather than a vendor SDK. Tests can inject a
-scripted model, and production can swap providers without changing orchestration.
+CodingAgent depends on LLMClient rather than the OpenAI SDK directly. This adapter
+translates provider-specific tool-call messages into small domain objects, keeping
+tests deterministic and orchestration independent of vendor response types.
 """
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
-"""Task lifecycle validation.
+"""Authoritative task-state transition rules.
 
-Explicit state transitions make duplicate queue deliveries and races visible.
-Callers should use optimistic version checks in TaskRepository as the second line
-of defence.
+Queue delivery, retries, cancellation and startup reconciliation converge here.
+Centralizing transitions prevents workers from inventing incompatible lifecycle
+semantics and makes illegal transitions fail explicitly.
 """
 from minion.domain import TaskStatus
 from minion.errors import InvalidStateTransition

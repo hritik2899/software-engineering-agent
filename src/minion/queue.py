@@ -1,7 +1,8 @@
-"""At-least-once task queue abstraction.
+"""At-least-once work queue.
 
-Redis Streams provide durable delivery with acknowledgement and stale-message
-reclaim. The in-memory implementation keeps local development dependency-free.
+Production uses Redis Streams consumer groups, explicit ACKs and XAUTOCLAIM so work
+owned by a crashed consumer can be reclaimed after the visibility timeout. The
+in-memory queue is only a development/test implementation of the same protocol.
 """
 from __future__ import annotations
 

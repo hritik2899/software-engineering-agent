@@ -1,4 +1,9 @@
-"""Control-plane authentication helpers."""
+"""Control-plane API authentication helpers.
+
+Authentication answers who may call the service; AuthorizationPolicy separately
+answers which repositories a task may touch. WebSocket authentication mirrors HTTP
+authentication before accepting a task event stream.
+"""
 from __future__ import annotations
 
 import secrets

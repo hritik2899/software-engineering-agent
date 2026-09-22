@@ -1,4 +1,9 @@
-"""Structured logging used by every control-plane component."""
+"""Structured logging configuration.
+
+Runtime components emit machine-queryable key/value events through structlog.
+Configuration is initialized at the process boundary rather than inside business
+components so logs remain consistent across API and worker paths.
+"""
 import logging
 import sys
 

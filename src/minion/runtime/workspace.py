@@ -1,4 +1,13 @@
-"""Execution environment providers with isolated warm Docker slots."""
+"""Sandbox/workspace lifecycle and warm execution pool.
+
+A Workspace maps one environment_id to one or more task-specific Git worktrees.
+Repository mirrors, dependency caches and Docker warm slots remove repeated cold
+work. Each warm container mounts only its own task slot so concurrent agents cannot
+browse one another's source trees.
+
+The local provider is for trusted development; the production reference path uses
+the resource-limited Docker provider.
+"""
 from __future__ import annotations
 
 import asyncio

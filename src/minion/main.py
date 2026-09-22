@@ -1,4 +1,9 @@
-"""Development entry point: python -m minion.main"""
+"""Process entry point for the Minion API service.
+
+Keeping startup tiny makes application construction testable: importing domain/runtime
+modules has no resource side effects, while FastAPI lifespan hooks initialize
+persistence, queue consumers and execution sandboxes.
+"""
 import uvicorn
 
 

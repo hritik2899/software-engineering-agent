@@ -1,4 +1,9 @@
-"""Prometheus metrics for the control plane."""
+"""Prometheus lifecycle metrics.
+
+Metrics describe stable business/runtime boundaries—submitted, running, completed,
+failed, duration and environment allocation—rather than fragile internal function
+counts. This keeps operational dashboards useful as implementation details evolve.
+"""
 from prometheus_client import Counter, Gauge, Histogram
 
 TASKS_SUBMITTED = Counter("minion_tasks_submitted_total", "Tasks accepted by the API")
