@@ -34,8 +34,7 @@ implements the systems problems that appear when the task lasts minutes or hours
 - model-independent completion evidence;
 - backend-owned GitHub push/PR credentials;
 - replayable WebSocket events;
-- Prometheus metrics;
-- Alembic migrations and CI integration tests.
+- Prometheus metrics;\n- operator-configured MCP Streamable HTTP tools;\n- Alembic migrations and CI integration tests.
 
 ## Canonical production architecture
 
@@ -214,6 +213,21 @@ Live stream:
 ```text
 ws://localhost:8000/tasks/TASK_ID/events/ws?after=0
 ```
+
+## MCP tools
+
+External integrations can be exposed through the Model Context Protocol without
+hard-coding them into the agent. Copy `mcp_servers.example.yaml`, configure only
+trusted endpoints, and set:
+
+```bash
+MINION_MCP_SERVERS_PATH=./mcp_servers.yaml
+```
+
+The runtime discovers each server's tool schemas using the official MCP Python SDK
+and exposes them as `mcp__SERVER__TOOL`. Repository skills cannot register MCP
+servers, remote endpoints require HTTPS, and MCP tools are treated as side-effecting
+unless the runtime can prove otherwise.
 
 ## Security model
 

@@ -234,6 +234,13 @@ The Tool object marks whether calls are `parallel_safe` or `mutating`.
 Deterministic guardrail before shell execution. This file is intentionally independent
 of the model prompt—prompt instructions are not a security boundary.
 
+### `src/minion/runtime/mcp_tools.py`
+
+Operator-owned MCP integration. `MCPManager.schemas()` discovers remote tool JSON
+Schemas and namespaces them into the model toolset; `call()` routes selected tools
+back to the configured Streamable HTTP endpoint. Repository content cannot add an MCP
+server.
+
 ### `src/minion/runtime/llm.py`
 
 Small provider adapter. The rest of the runtime sees `ModelTurn` and `ToolCall`,
@@ -293,7 +300,7 @@ Alembic schema history. Run migrations before production startup.
 | Agent learns project conventions | `SkillManager` → `ContextManager` |
 | Prompt is built | `ContextManager.build_messages` |
 | LLM is called | `CodingAgent._model_turn` → `OpenAIClient.complete` |
-| Tool is selected | model returns `ToolCall` |
+| Tool is selected | model returns `ToolCall` |\n| External MCP tool is discovered/called | `MCPManager.schemas/call` via `ToolRegistry` |
 | Read-only tools run in parallel | `CodingAgent._execute_turn_tools` |
 | Shell command is blocked/allowed | `CommandPolicy.evaluate` |
 | File patch is applied | `ToolRegistry.apply_patch` handler |

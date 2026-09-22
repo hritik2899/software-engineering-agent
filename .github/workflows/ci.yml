@@ -1,3 +1,6 @@
+# Minion release gate.
+# A commit is accepted only if it installs as a package, compiles, lints, migrates
+# a clean database, imports the FastAPI app, and passes behavioral/integration tests.
 name: CI
 
 on:

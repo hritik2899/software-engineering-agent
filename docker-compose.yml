@@ -1,3 +1,7 @@
+# Minion production-style local infrastructure.
+# PostgreSQL is authoritative durable state; Redis provides Streams work delivery
+# and Pub/Sub live fan-out. Agent execution itself remains in separately managed
+# Docker warm sandboxes, not inside these service containers.
 services:
   postgres:
     image: postgres:16

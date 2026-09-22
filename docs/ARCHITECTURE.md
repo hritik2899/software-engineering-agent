@@ -18,7 +18,7 @@ testability, but this is the production story to present in an interview.
 | Repository intelligence | **Content-addressed index on shared POSIX cache volume** | parse once per file content, ranked repo map |
 | Durable code checkpoint | **Git commits** | recoverable code-state boundary |
 | Schema changes | **Alembic** | versioned PostgreSQL migrations |
-| Metrics | **Prometheus** | task/environment lifecycle metrics |
+| Metrics | **Prometheus** | task/environment lifecycle metrics |\n| External tool protocol | **MCP v2 Streamable HTTP** | operator-approved external tools |
 
 The reference deployment mounts the repository-index/cache directory on a shared
 persistent POSIX volume. The application only requires filesystem semantics, so the
@@ -54,7 +54,7 @@ flowchart LR
         POLICY["Deterministic Command Policy"]
     end
 
-    GH["GitHub<br/>clone • push • pull request"]
+    GH["GitHub<br/>clone • push • pull request"]\n    MCP["Operator-approved MCP Services<br/>Streamable HTTP"]
 
     DEV -->|"1. POST task / message"| API
     API -->|"2. authenticate + authorize"| AUTH
@@ -76,7 +76,7 @@ flowchart LR
     IDX -->|"ranked repo map / symbol evidence"| TOOLS
     CTX -->|"bounded prompt"| AGENT
     AGENT -->|"11. model request + tool schemas"| MODEL
-    MODEL -->|"12. tool calls"| AGENT
+    MODEL -->|"12. tool calls"| AGENT\n    MCP -->|"tool schemas / results"| TOOLS
     AGENT -->|"13. read-only calls may fan out"| TOOLS
     TOOLS -->|"14. shell command"| POLICY
     POLICY -->|"approved execution"| WS

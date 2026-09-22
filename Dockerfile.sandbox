@@ -1,3 +1,7 @@
+# Minion sandbox execution image.
+# It contains common build toolchains but no application/GitHub/model credentials.
+# The DockerEnvironmentProvider adds runtime CPU/memory/PID/capability restrictions
+# and mounts exactly one warm task slot at /workspace.
 FROM python:3.12-bookworm
 
 RUN apt-get update \

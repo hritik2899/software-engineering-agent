@@ -1,3 +1,6 @@
+# Minion developer entry points.
+# These commands intentionally mirror the CI/runtime setup so local verification
+# exercises the same package install, tests and sandbox image used by the service.
 .PHONY: install run infra sandbox test lint
 
 install:
