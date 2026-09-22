@@ -1,3 +1,9 @@
+"""End-to-end orchestration test.
+
+The fixture uses file-backed SQLite so worker tasks and the test client can open
+independent async connections without losing schema visibility. Fake environment and
+agent implementations isolate orchestration behavior from Git and LLM dependencies.
+"""
 import asyncio
 from pathlib import Path
 
@@ -53,7 +59,9 @@ class FakeAgent:
 
 
 async def test_orchestrator_end_to_end(tmp_path: Path):
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'orchestrator.db'}"
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)

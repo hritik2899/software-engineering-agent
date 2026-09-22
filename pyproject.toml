@@ -47,3 +47,10 @@ select = ["E", "F", "UP", "B"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/minion"]
+
+
+[tool.hatch.build]
+include = [
+  "src/minion/**/*.py",
+  "src/minion/builtin_skills/**/*.md",
+]
