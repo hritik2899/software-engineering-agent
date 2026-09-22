@@ -1,7 +1,8 @@
-"""Best-effort distributed metadata cache.
+"""Best-effort metadata cache.
 
-Durable SQL/event state is authoritative. Redis only accelerates hot lookups and
-heartbeats; deleting the entire cache must not destroy a task.
+Redis/local cache entries are acceleration only. Deleting every cache entry must
+never lose a task, session, event, repository checkpoint, or completed result.
+Authoritative state lives in PostgreSQL and Git.
 """
 from __future__ import annotations
 

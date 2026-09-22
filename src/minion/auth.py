@@ -1,4 +1,10 @@
-"""Repository authorization policy boundary."""
+"""Repository authorization policy.
+
+This admission-control boundary validates repository URL schemes and host allow-lists
+before a task enters the durable queue. It prevents the coding runtime from becoming
+an arbitrary network clone primitive. Organization IAM can replace this policy
+without changing the orchestrator contract.
+"""
 from urllib.parse import urlparse
 
 from minion.config import Settings

@@ -1,4 +1,10 @@
-"""Durable event log plus local/Redis live fan-out."""
+"""Durable event log plus low-latency live fan-out.
+
+Every meaningful task/runtime event is first committed to SQL with a monotonically
+increasing per-task sequence. Redis Pub/Sub then reduces cross-process WebSocket
+latency. Reconnection always replays from SQL, so Pub/Sub loss cannot create a
+permanent history gap.
+"""
 from __future__ import annotations
 
 import asyncio

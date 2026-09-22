@@ -1,7 +1,8 @@
-"""Ephemeral Git authentication.
+"""Ephemeral Git credential handling.
 
-Credentials are injected only into Git subprocess configuration and are never
-persisted in .git/config or exposed to the coding agent's shell environment.
+Backend clone/push operations may receive a GitHub token through process-local Git
+configuration. Agent-controlled commands receive a scrubbed environment instead, so
+repository and model credentials stay outside the LLM/tool trust boundary.
 """
 from __future__ import annotations
 

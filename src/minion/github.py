@@ -1,6 +1,8 @@
-"""GitHub branch/PR publisher.
+"""Backend-owned GitHub publication service.
 
-Git credentials stay in the backend process and are never exposed to the LLM.
+The agent edits and verifies a local task branch; this service separately owns
+authenticated push and pull-request creation. That separation prevents model-driven
+shell commands from receiving the GitHub token and keeps PR creation idempotent.
 """
 from __future__ import annotations
 

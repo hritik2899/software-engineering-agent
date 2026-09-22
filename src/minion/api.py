@@ -1,4 +1,10 @@
-"""FastAPI control-plane API and replayable WebSocket event stream."""
+"""FastAPI control-plane boundary.
+
+HTTP endpoints create, read and control logical tasks while WebSocket streams the
+same durable event sequence used for recovery. The API never executes repository
+commands itself: execution is delegated to Orchestrator. PostgreSQL is authoritative;
+Redis provides queueing and live fan-out acceleration.
+"""
 from __future__ import annotations
 
 from contextlib import asynccontextmanager

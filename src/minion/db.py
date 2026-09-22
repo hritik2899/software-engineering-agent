@@ -1,8 +1,8 @@
-"""Async database bootstrap.
+"""Async SQLAlchemy bootstrap for authoritative control-plane state.
 
-SQLite is the zero-setup default.  Set MINION_DATABASE_URL to an async PostgreSQL
-URL in production.  Durable task/session/event state is the source of truth; caches
-must always be reconstructible from this data plus Git/workspace state.
+The production architecture uses PostgreSQL and Alembic migrations. Automatic table
+creation exists only for zero-setup development/tests. SessionFactory is shared by
+API and workers while repository classes encapsulate transaction details.
 """
 from collections.abc import AsyncIterator
 
