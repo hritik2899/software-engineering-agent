@@ -49,6 +49,7 @@ class EventType(StrEnum):
     ENVIRONMENT_ALLOCATED = "environment.allocated"
     ENVIRONMENT_READY = "environment.ready"
     ENVIRONMENT_HEARTBEAT = "environment.heartbeat"
+    REPOSITORY_INDEXED = "repository.indexed"
     AGENT_STEP = "agent.step"
     AGENT_MESSAGE = "agent.message"
     USER_MESSAGE = "user.message"

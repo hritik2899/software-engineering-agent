@@ -33,6 +33,7 @@ from minion.repositories import (
     SessionRepository,
     TaskRepository,
 )
+from minion.runtime.code_index import RepositoryContextIndex
 from minion.runtime.factory import build_agent
 from minion.runtime.workspace import EnvironmentProvider, Workspace
 
@@ -58,6 +59,8 @@ class Orchestrator:
         self.agent_factory = agent_factory
         self.auth = AuthorizationPolicy(settings)
         self.publisher = GitHubPublisher(settings)
+        # Derived repository intelligence is shared across tasks through cache_root.
+        self.repo_index = RepositoryContextIndex(settings.cache_root)
         self._workers: list[asyncio.Task[None]] = []
         self._running: dict[str, asyncio.Task[None]] = {}
         self._stopping = asyncio.Event()
@@ -184,6 +187,57 @@ class Orchestrator:
             finally:
                 self._running.pop(item.task_id, None)
 
+    async def _preindex_workspace(
+        self,
+        task: TaskView,
+        workspace: Workspace,
+        events: EventStore,
+    ) -> None:
+        """Pre-index repositories before the first model turn.
+
+        Indexing is an accelerator, not authoritative state. A damaged cache or a
+        parser miss must not make an otherwise runnable engineering task fail.
+        """
+        async def index_one(name: str, path):
+            try:
+                indexed = await self.repo_index.ensure_index(path)
+                await events.append(
+                    task.id,
+                    task.session_id,
+                    EventType.REPOSITORY_INDEXED,
+                    {
+                        "repository": name,
+                        "head": indexed.head,
+                        "parsed_files": indexed.parsed_files,
+                        "reused_files": indexed.reused_files,
+                        "status": "ready",
+                    },
+                )
+            except Exception as exc:
+                log.warning(
+                    "repository_preindex_failed",
+                    task_id=task.id,
+                    repository=name,
+                    error=str(exc),
+                )
+                await events.append(
+                    task.id,
+                    task.session_id,
+                    EventType.REPOSITORY_INDEXED,
+                    {
+                        "repository": name,
+                        "status": "degraded",
+                        "error": str(exc),
+                    },
+                )
+
+        await asyncio.gather(
+            *(
+                index_one(name, path)
+                for name, path in workspace.repositories.items()
+            )
+        )
+
     async def _heartbeat(self, environment_id: str) -> None:
         while True:
             await asyncio.sleep(self.settings.heartbeat_interval_seconds)
@@ -263,6 +317,9 @@ class Orchestrator:
                     self._heartbeat(workspace.environment_id),
                     name=f"heartbeat-{workspace.environment_id}",
                 )
+
+                events = EventStore(db, self.bus)
+                await self._preindex_workspace(task, workspace, events)
 
                 agent = self.agent_factory(
                     self.settings, db, self.bus, workspace
