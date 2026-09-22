@@ -23,6 +23,7 @@ dependencies = [
   "prometheus-client>=0.21",
   "filelock>=3.16",
   "alembic>=1.13",
+  "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]

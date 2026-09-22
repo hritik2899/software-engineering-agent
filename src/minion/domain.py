@@ -1,4 +1,9 @@
-"""Domain contracts shared by API, orchestration and runtime layers."""
+"""Shared domain contracts for API, persistence, orchestration and runtime.
+
+This module contains business vocabulary rather than infrastructure code. Three IDs
+have deliberately different lifetimes: task_id is logical work, session_id is
+durable agent memory, and environment_id is the replaceable physical workspace.
+"""
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -10,10 +15,12 @@ from pydantic import BaseModel, Field
 
 
 def new_id(prefix: str) -> str:
+    """Generate opaque IDs that remain recognizable in logs/events."""
     return f"{prefix}_{uuid4().hex}"
 
 
 def utcnow() -> datetime:
+    """Central UTC clock helper."""
     return datetime.now(UTC)
 
 
@@ -46,16 +53,22 @@ class EventType(StrEnum):
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
     TASK_CANCELLED = "task.cancelled"
+
     ENVIRONMENT_ALLOCATED = "environment.allocated"
     ENVIRONMENT_READY = "environment.ready"
     ENVIRONMENT_HEARTBEAT = "environment.heartbeat"
+
     REPOSITORY_INDEXED = "repository.indexed"
+    SKILL_ACTIVATED = "skill.activated"
+
     AGENT_STEP = "agent.step"
     AGENT_MESSAGE = "agent.message"
     USER_MESSAGE = "user.message"
+
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"
     TOOL_FAILED = "tool.failed"
+
     CONTEXT_COMPACTED = "context.compacted"
     CHECKPOINT_CREATED = "checkpoint.created"
     PR_CREATED = "pr.created"
@@ -95,6 +108,7 @@ class SessionView(BaseModel):
     summary: str = ""
     current_plan: list[str] = Field(default_factory=list)
     active_constraints: list[str] = Field(default_factory=list)
+    active_skills: list[str] = Field(default_factory=list)
     last_event_sequence: int = 0
     created_at: datetime
     updated_at: datetime

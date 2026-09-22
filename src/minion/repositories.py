@@ -1,4 +1,8 @@
-"""Repositories around durable control-plane state."""
+"""Repository objects around authoritative SQL state.
+
+These classes keep SQLAlchemy queries out of API/orchestrator/runtime code and
+centralize optimistic task transitions plus compact session-memory updates.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -29,7 +33,10 @@ def _task_view(row: TaskRow) -> TaskView:
         user_id=row.user_id,
         instruction=row.instruction,
         status=TaskStatus(row.status),
-        repositories=[RepositorySpec.model_validate(r) for r in row.repositories],
+        repositories=[
+            RepositorySpec.model_validate(item)
+            for item in row.repositories
+        ],
         publish_pr=row.publish_pr,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -43,23 +50,31 @@ class TaskRepository:
         self.db = db
 
     async def create(self, request: TaskCreate) -> TaskView:
-        task_id, session_id = new_id("task"), new_id("session")
+        task_id = new_id("task")
+        session_id = new_id("session")
         task = TaskRow(
             id=task_id,
             session_id=session_id,
             user_id=request.user_id,
             instruction=request.instruction,
             status=TaskStatus.CREATED.value,
-            repositories=[r.model_dump() for r in request.repositories],
+            repositories=[
+                item.model_dump()
+                for item in request.repositories
+            ],
             publish_pr=request.publish_pr,
         )
-        session = SessionRow(id=session_id, task_id=task_id)
+        session = SessionRow(
+            id=session_id, task_id=task_id
+        )
         self.db.add_all([task, session])
         await self.db.commit()
         await self.db.refresh(task)
         return _task_view(task)
 
-    async def get(self, task_id: str) -> TaskView | None:
+    async def get(
+        self, task_id: str
+    ) -> TaskView | None:
         row = await self.db.get(TaskRow, task_id)
         return _task_view(row) if row else None
 
@@ -96,27 +111,42 @@ class TaskRepository:
             values["error"] = error
         if result is not None:
             values["result"] = result
-        if current == TaskStatus.FAILED and target == TaskStatus.QUEUED:
+        if (
+            current == TaskStatus.FAILED
+            and target == TaskStatus.QUEUED
+        ):
             values["error"] = None
             values["result"] = None
 
         stmt = (
             update(TaskRow)
-            .where(TaskRow.id == task_id, TaskRow.version == expected_version)
+            .where(
+                TaskRow.id == task_id,
+                TaskRow.version == expected_version,
+            )
             .values(**values)
         )
         proxy = await self.db.execute(stmt)
         if proxy.rowcount != 1:
             await self.db.rollback()
-            raise InvalidStateTransition("task changed concurrently; retry from fresh state")
+            raise InvalidStateTransition(
+                "task changed concurrently; retry from fresh state"
+            )
         await self.db.commit()
         return await self.require(task_id)
 
-    async def replace_environment(self, task_id: str, environment_id: str) -> TaskView:
+    async def replace_environment(
+        self,
+        task_id: str,
+        environment_id: str,
+    ) -> TaskView:
         await self.db.execute(
             update(TaskRow)
             .where(TaskRow.id == task_id)
-            .values(environment_id=environment_id, updated_at=utcnow())
+            .values(
+                environment_id=environment_id,
+                updated_at=utcnow(),
+            )
         )
         await self.db.commit()
         return await self.require(task_id)
@@ -141,8 +171,12 @@ class SessionRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get(self, session_id: str) -> SessionView | None:
-        row = await self.db.get(SessionRow, session_id)
+    async def get(
+        self, session_id: str
+    ) -> SessionView | None:
+        row = await self.db.get(
+            SessionRow, session_id
+        )
         if not row:
             return None
         return SessionView(
@@ -150,8 +184,13 @@ class SessionRepository:
             task_id=row.task_id,
             summary=row.summary,
             current_plan=row.current_plan or [],
-            active_constraints=row.active_constraints or [],
-            last_event_sequence=row.last_event_sequence,
+            active_constraints=(
+                row.active_constraints or []
+            ),
+            active_skills=row.active_skills or [],
+            last_event_sequence=(
+                row.last_event_sequence
+            ),
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -163,25 +202,46 @@ class SessionRepository:
         summary: str | None = None,
         current_plan: list[str] | None = None,
         active_constraints: list[str] | None = None,
+        active_skills: list[str] | None = None,
     ) -> None:
-        values: dict[str, Any] = {"updated_at": utcnow()}
+        values: dict[str, Any] = {
+            "updated_at": utcnow()
+        }
         if summary is not None:
             values["summary"] = summary
         if current_plan is not None:
             values["current_plan"] = current_plan
         if active_constraints is not None:
-            values["active_constraints"] = active_constraints
+            values["active_constraints"] = (
+                active_constraints
+            )
+        if active_skills is not None:
+            values["active_skills"] = active_skills
+
         await self.db.execute(
-            update(SessionRow).where(SessionRow.id == session_id).values(**values)
+            update(SessionRow)
+            .where(SessionRow.id == session_id)
+            .values(**values)
         )
         await self.db.commit()
 
-    async def append_instruction(self, session_id: str, message: str, keep: int = 20) -> None:
+    async def append_instruction(
+        self,
+        session_id: str,
+        message: str,
+        keep: int = 20,
+    ) -> None:
         current = await self.get(session_id)
         if not current:
             raise KeyError(session_id)
-        constraints = [*current.active_constraints, message][-keep:]
-        await self.update_memory(session_id, active_constraints=constraints)
+        constraints = [
+            *current.active_constraints,
+            message,
+        ][-keep:]
+        await self.update_memory(
+            session_id,
+            active_constraints=constraints,
+        )
 
 
 class EnvironmentRepository:
@@ -198,7 +258,10 @@ class EnvironmentRepository:
         status: EnvironmentStatus,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        row = await self.db.get(EnvironmentLeaseRow, environment_id)
+        row = await self.db.get(
+            EnvironmentLeaseRow,
+            environment_id,
+        )
         if row is None:
             row = EnvironmentLeaseRow(
                 id=environment_id,
@@ -214,23 +277,43 @@ class EnvironmentRepository:
             row.provider = provider
             row.workspace_path = workspace_path
             row.status = status.value
-            row.metadata_json = metadata or row.metadata_json
+            row.metadata_json = (
+                metadata or row.metadata_json
+            )
             row.updated_at = utcnow()
         row.last_heartbeat_at = utcnow()
         await self.db.commit()
 
-    async def heartbeat(self, environment_id: str) -> None:
+    async def heartbeat(
+        self, environment_id: str
+    ) -> None:
         await self.db.execute(
             update(EnvironmentLeaseRow)
-            .where(EnvironmentLeaseRow.id == environment_id)
-            .values(last_heartbeat_at=utcnow(), updated_at=utcnow())
+            .where(
+                EnvironmentLeaseRow.id
+                == environment_id
+            )
+            .values(
+                last_heartbeat_at=utcnow(),
+                updated_at=utcnow(),
+            )
         )
         await self.db.commit()
 
-    async def mark(self, environment_id: str, status: EnvironmentStatus) -> None:
+    async def mark(
+        self,
+        environment_id: str,
+        status: EnvironmentStatus,
+    ) -> None:
         await self.db.execute(
             update(EnvironmentLeaseRow)
-            .where(EnvironmentLeaseRow.id == environment_id)
-            .values(status=status.value, updated_at=utcnow())
+            .where(
+                EnvironmentLeaseRow.id
+                == environment_id
+            )
+            .values(
+                status=status.value,
+                updated_at=utcnow(),
+            )
         )
         await self.db.commit()
