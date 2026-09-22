@@ -1,77 +1,130 @@
-# Minion-Style Software Engineering Agent
+# Minion — Remote Software Engineering Agent
 
-A runnable, production-oriented reference implementation of a **remote agentic
-software-engineering platform**. It converts a natural-language engineering task
-into repository investigation, code edits, build/test execution, Git checkpoints
-and optionally GitHub pull requests.
+A runnable, production-oriented backend for long-running autonomous software
+engineering tasks.
 
-This project was built specifically as an architecture-learning codebase: every
-important Minion-style concept discussed in the design is represented by a concrete
-interface, model or execution path.
+Minion accepts a natural-language engineering task, creates an isolated repository
+workspace, pre-indexes the codebase, loads relevant Agent Skills, lets a tool-calling
+model inspect/edit/test the code, persists every meaningful action, survives worker
+restarts, and can publish the verified branch as a GitHub pull request.
 
-> This is an educational reference implementation. It is not Uber source code and
-> does not claim to reproduce proprietary Minion internals.
+> This is an independent educational/reference implementation. It is not Uber source
+> code and does not claim to reproduce proprietary internals.
 
-## Features
+## Why this codebase is different
 
-- FastAPI control plane and REST API
-- persistent task/session/event state with SQLite or PostgreSQL
-- asynchronous Redis or in-memory task queue
-- explicit task state machine + optimistic idempotency
-- local and Docker-isolated execution environments
-- replaceable `environmentId` with startup reconciliation/recovery
-- multi-repository workspaces
-- OpenAI-backed autonomous coding-agent loop
-- bounded context manager over durable history
-- file, search, shell/build/test and Git tools
-- Git checkpoint recovery boundary
-- replayable bidirectional WebSocket event stream
-- mid-execution user instructions
-- repository mirror cache
-- shared pip/npm/Maven/Gradle dependency caches
-- isolated warm Docker execution pool
-- commit-SHA repository-context cache and dependency hints
-- durable Redis Streams queue with acknowledgement/stale-work reclaim
-- Redis cross-instance live event fan-out with SQL event replay
-- durable context plans/constraints + history compaction
-- environment leases/heartbeats and startup reconciliation
-- Prometheus metrics, liveness/readiness, optional API bearer auth
-- optional GitHub branch push + pull-request publishing
-- CI tests and architecture/LLD documentation
+Many coding-agent demos are one loop around an LLM and a shell. This repository also
+implements the systems problems that appear when the task lasts minutes or hours:
 
-## Read these first
+- durable task/session/event state;
+- Redis Streams at-least-once worker delivery;
+- startup reconciliation and retry recovery;
+- environment leases and heartbeats;
+- isolated reusable Docker warm sandboxes;
+- multi-repository task workspaces;
+- Git mirror and language dependency caches;
+- **content-addressed repository indexing**;
+- dependency graph + ranked repository map;
+- symbol lookup and blast-radius analysis;
+- **Agent Skills** with built-in/user/repository scopes;
+- bounded context + durable compaction;
+- parallel read-only exploration;
+- deterministic command safety policy;
+- validated patch editing;
+- model-independent completion evidence;
+- backend-owned GitHub push/PR credentials;
+- replayable WebSocket events;
+- Prometheus metrics;
+- Alembic migrations and CI integration tests.
 
-1. [Architecture / HLD](docs/ARCHITECTURE.md)
-2. [Low-Level Design](docs/LLD.md)
-3. `src/minion/domain.py` — task/session/environment mental model
-4. `src/minion/orchestrator.py` — lifecycle, scheduling, recovery
-5. `src/minion/runtime/agent.py` — reasoning/action loop
-6. `src/minion/runtime/context.py` — model context construction
-7. `src/minion/runtime/workspace.py` — environment + repo caches
-8. `src/minion/runtime/tools.py` — real code/shell/Git actions
-9. `src/minion/events.py` — durable replay + live streaming
-10. `src/minion/api.py` — external control plane
+## Canonical production architecture
 
-## Quick start
+The design uses one explicit stack:
 
-Requires Python 3.11+ and Git.
+```text
+FastAPI
+   │
+   ├── PostgreSQL 16       authoritative task/session/event/lease state
+   ├── Redis 7 Streams     worker queue
+   └── Redis 7 Pub/Sub     live event fan-out
+            │
+            ▼
+      Orchestrator workers
+            │
+            ▼
+      Docker warm pool
+            │
+       task workspace
+       /      |      \
+      /       |       \
+ repo index  skills   CodingAgent
+                         │
+                    OpenAI model
+                         │
+                    Tool Registry
+                         │
+                 policy → code/test/Git
+                         │
+                       GitHub
+```
+
+See **[Architecture](docs/ARCHITECTURE.md)** for the full communication/data-flow
+diagram and **[LLD](docs/LLD.md)** for class, state, indexing and runtime details.
+
+## Repository indexing
+
+Repositories are indexed **before the first model turn**.
+
+Parsed file information is stored by SHA-256 of file contents, while each Git commit
+gets a lightweight manifest. If one file changes between commits, only the new file
+content is parsed—the other file objects are reused.
+
+Model-visible index tools:
+
+```text
+repository_overview
+repository_search
+symbol_context
+impact_analysis
+dependency_hints
+index_stats
+```
+
+See `src/minion/runtime/code_index.py`.
+
+## Agent Skills
+
+Skills are Markdown instruction bundles with YAML metadata.
+
+```text
+src/minion/builtin_skills/*/SKILL.md
+~/.minion/skills/*/SKILL.md
+<repo>/.minion/skills/*/SKILL.md
+```
+
+Built-in examples cover Python testing, Java/Kotlin builds, TypeScript and
+evidence-first bug fixing. Marker files and task keywords activate relevant skills,
+or the model can call `list_skills` / `activate_skill`.
+
+Repository skills are **instructions only**; they cannot silently execute host code.
+
+See `src/minion/runtime/skills.py`.
+
+## Start locally
+
+Requirements: Python 3.11+, Git.
 
 ```bash
 git clone https://github.com/hritik2899/software-engineering-agent.git
 cd software-engineering-agent
+
 cp .env.example .env
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-For production-style database management, run migrations before startup:
-
-```bash
-MINION_AUTO_CREATE_SCHEMA=false alembic upgrade head
-```
-
-Put your API key in `.env`:
+Set:
 
 ```bash
 OPENAI_API_KEY=...
@@ -84,112 +137,132 @@ Run:
 uvicorn minion.api:app --reload
 ```
 
-Open API docs:
+Open:
 
 ```text
 http://localhost:8000/docs
 ```
 
-### Create a task
+## Run the production-style local stack
 
-```bash
-curl -X POST http://localhost:8000/tasks \
-  -H 'content-type: application/json' \
-  -d '{
-    "instruction": "Add a README section explaining how to run the tests",
-    "repositories": [{
-      "url": "https://github.com/YOUR_USER/YOUR_TEST_REPO.git",
-      "base_branch": "main",
-      "name": "demo"
-    }],
-    "publish_pr": false
-  }'
-```
-
-Use a disposable repository first.
-
-### Watch events
-
-```bash
-curl 'http://localhost:8000/tasks/TASK_ID/events?after=0'
-```
-
-WebSocket:
-
-```text
-ws://localhost:8000/tasks/TASK_ID/events/ws?after=0
-```
-
-### Redirect an agent while it runs
-
-```bash
-curl -X POST http://localhost:8000/tasks/TASK_ID/messages \
-  -H 'content-type: application/json' \
-  -d '{"message":"Do not modify the legacy implementation; use the new adapter."}'
-```
-
-The message is durably appended to the task event stream and appears in the next
-context window.
-
-## Docker sandbox mode
-
-Build the sandbox image:
-
-```bash
-make sandbox
-```
-
-Then set:
-
-```bash
-MINION_ENVIRONMENT_PROVIDER=docker
-MINION_DOCKER_IMAGE=minion-sandbox:latest
-```
-
-In Docker mode repository files are bind-mounted but arbitrary build/test commands
-run inside the isolated container. Shared dependency cache mounts accelerate repeat
-tasks.
-
-## PostgreSQL + Redis
+Start PostgreSQL and Redis:
 
 ```bash
 docker compose up -d postgres redis
 ```
 
-Then:
+Build the sandbox:
+
+```bash
+make sandbox
+```
+
+Configure:
 
 ```bash
 MINION_DATABASE_URL=postgresql+asyncpg://minion:minion@localhost:5432/minion
 MINION_REDIS_URL=redis://localhost:6379/0
+MINION_ENVIRONMENT_PROVIDER=docker
+MINION_DOCKER_IMAGE=minion-sandbox:latest
+MINION_AUTO_CREATE_SCHEMA=false
 ```
 
-Redis is an accelerator/queue, not the source of truth.
+Migrate then serve:
 
-## PR publishing
+```bash
+alembic upgrade head
+uvicorn minion.api:app
+```
 
-Set `GITHUB_TOKEN`, make sure Git credentials can push the task branch, and submit
-with `"publish_pr": true`. The LLM never receives the GitHub token; publication is
-owned by the backend `GitHubPublisher`.
+## Submit a task
 
-## Learning path
+```bash
+curl -X POST http://localhost:8000/tasks \
+  -H 'content-type: application/json' \
+  -d '{
+    "instruction": "Fix the retry bug and add a regression test",
+    "repositories": [{
+      "url": "https://github.com/YOUR_USER/YOUR_REPO.git",
+      "base_branch": "main",
+      "name": "service"
+    }],
+    "publish_pr": false
+  }'
+```
 
-The first six commits establish the conceptual layers; later audit/hardening commits make the implementation verifiable and closer to a deployable reference:
+## Redirect a running task
 
-1. repository initialization
-2. configuration + domain contracts
-3. durable tasks/sessions/events
-4. agent runtime + tools/context
-5. orchestration + Docker/caches/recovery/API
-6. hardening + CI/tests/HLD/LLD/runbook
+```bash
+curl -X POST http://localhost:8000/tasks/TASK_ID/messages \
+  -H 'content-type: application/json' \
+  -d '{"message":"Keep the public response schema backwards compatible."}'
+```
 
-Read the commits in order to reconstruct the platform the same way you would design
-it in a system-design interview.
+The instruction becomes a durable active constraint in the session and is included in
+future context windows.
 
-## Important production notes
+## Watch durable progress
 
-The default local provider is **not a security sandbox**. Use Docker for untrusted
-commands and implement a Kubernetes/DevPod `EnvironmentProvider` for a real remote
-fleet. Production deployments should still integrate organization-specific IAM, a real secrets broker, external tracing, rate limits, and a remote DevPod/Kubernetes EnvironmentProvider. This repository now includes migrations, resource-limited Docker isolation, metrics, a durable acknowledged queue, repository/context caches, and distributed event fan-out.
+Replay:
 
-The interfaces in this repository are intentionally designed so those infrastructure
-upgrades do not require rewriting the coding agent.
+```bash
+curl 'http://localhost:8000/tasks/TASK_ID/events?after=0'
+```
+
+Live stream:
+
+```text
+ws://localhost:8000/tasks/TASK_ID/events/ws?after=0
+```
+
+## Security model
+
+The model is not the security boundary.
+
+- API authentication protects the control plane.
+- Repository host policy limits clone targets.
+- GitHub/OpenAI/API secrets are scrubbed from agent child commands.
+- Shell commands pass deterministic command policy.
+- Docker sandboxes have dropped capabilities and resource limits.
+- Each warm container sees only its own task source slot.
+- PR publication runs in backend code using backend-owned credentials.
+
+## Verification model
+
+The agent cannot finish merely by saying “tests pass”. `finish_task` inspects the
+durable event history and requires evidence of:
+
+- a successful `run_command`; and
+- a successful `git_diff`.
+
+This makes completion a runtime property rather than an LLM statement.
+
+## Documentation
+
+- [Production Architecture / HLD](docs/ARCHITECTURE.md)
+- [Low-Level Design](docs/LLD.md)
+- [Code Walkthrough](docs/CODE_WALKTHROUGH.md)
+- [Open-Source Agent Benchmark](docs/OPEN_SOURCE_BENCHMARK.md)
+
+## CI gate
+
+Every push verifies:
+
+```text
+editable package install
+Python compilation
+Ruff
+Alembic migrations
+FastAPI import
+pytest unit + integration suite
+```
+
+## About “better than Claude Code”
+
+The architecture is intentionally ambitious, but a serious project should not declare
+itself superior to another coding agent without measured results. The benchmark doc
+defines the next proof points: task success, tokens, latency, recovery, index reuse,
+security violations and regression rate.
+
+The goal of this repository is to make those comparisons **measurable**, not to hide
+behind feature-count marketing.
