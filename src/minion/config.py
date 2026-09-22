@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # Deterministic safety gate applied before shell execution.
     command_policy_mode: str = "enforce"
 
+    # Optional operator-owned MCP configuration. Repository content cannot alter it.
+    mcp_servers_path: Path | None = None
+
     # Execution plane.
     environment_provider: str = "local"
     docker_image: str = "minion-sandbox:latest"

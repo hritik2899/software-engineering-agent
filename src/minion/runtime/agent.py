@@ -44,7 +44,7 @@ class CodingAgent:
         messages: list[dict[str, Any]],
     ) -> ModelTurn:
         schemas = [
-            *self.tools.schemas,
+            *(await self.tools.model_schemas()),
             *self.context.control_tool_schemas,
         ]
         return await self.llm.complete(messages, schemas)

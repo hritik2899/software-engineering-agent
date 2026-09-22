@@ -1,0 +1,6 @@
+# Copy to mcp_servers.yaml and set MINION_MCP_SERVERS_PATH to enable.
+# Only explicitly configured endpoints become model-visible tools.
+servers:
+  # engineering-search:
+  #   url: https://mcp.example.com/mcp
+  #   description: Internal engineering search and issue-tracker tools.

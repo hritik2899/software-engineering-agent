@@ -48,7 +48,7 @@ coding agents treat as central:
 | Git-aware precise editing | full-file rewrites are noisy and fragile | validated `apply_patch` tool |
 | Parallel exploration | independent reads should not serialize latency | same-turn read-only tools execute concurrently |
 | Long-run compact state | huge transcripts become expensive/slow | existing durable compaction retained and skill/index events added to compaction evidence |
-| Runtime verification | model claims cannot be trusted as proof | completion gate checks successful command + diff events |
+| Runtime verification | model claims cannot be trusted as proof | completion gate checks successful command + diff events |\n| Cline/OpenHands MCP ecosystems | standardized external tools without hard-coding every integration | operator-configured Streamable HTTP MCP discovery with namespaced tools |
 
 ## Repository intelligence comparison
 

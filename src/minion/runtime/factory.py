@@ -10,6 +10,7 @@ from minion.events import EventBus, EventStore
 from minion.runtime.agent import CodingAgent
 from minion.runtime.context import ContextManager
 from minion.runtime.llm import OpenAIClient
+from minion.runtime.mcp_tools import MCPManager
 from minion.runtime.skills import SkillManager
 from minion.runtime.tools import ToolRegistry
 from minion.runtime.workspace import Workspace
@@ -37,6 +38,7 @@ def build_agent(
         bus,
         skills=skills,
     )
+    mcp = MCPManager(settings.mcp_servers_path)
     tools = ToolRegistry(
         workspace,
         settings.command_timeout_seconds,
@@ -44,6 +46,7 @@ def build_agent(
         command_policy_mode=(
             settings.command_policy_mode
         ),
+        mcp_manager=mcp,
     )
     return CodingAgent(
         llm=OpenAIClient(settings),

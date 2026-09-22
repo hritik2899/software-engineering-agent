@@ -660,3 +660,31 @@ to persistent workspace storage so retry/recovery can reattach it.
 | command safety | `src/minion/runtime/policy.py` |
 | GitHub publication | `src/minion/github.py` |
 | metrics | `src/minion/metrics.py` |
+
+
+---
+
+## 17. MCP integration
+
+External tools are configured outside repositories:
+
+```yaml
+servers:
+  engineering-search:
+    url: https://mcp.example.com/mcp
+    description: Internal engineering tools
+```
+
+`MCPManager` connects with the official MCP Python SDK, discovers `tools/list`,
+and exposes each remote tool as `mcp__<server>__<tool>`.
+
+The server-provided JSON Schema becomes the model tool schema. ToolRegistry routes a
+namespaced call back through `MCPManager.call()`.
+
+Trust rules:
+
+- only the operator-owned config file can add servers;
+- repository Skills cannot register MCP endpoints;
+- non-loopback HTTP is rejected; remote endpoints require HTTPS;
+- MCP tools are never marked parallel-safe because their side effects are unknown;
+- MCP configuration is never injected into repository shell commands.

@@ -17,6 +17,7 @@ from typing import Any
 from minion.errors import ToolExecutionError
 from minion.git_auth import safe_child_environment
 from minion.runtime.code_index import RepositoryContextIndex
+from minion.runtime.mcp_tools import MCPManager
 from minion.runtime.policy import CommandPolicy
 from minion.runtime.workspace import Workspace
 
@@ -68,6 +69,7 @@ class ToolRegistry:
         *,
         cache_root: Path | None = None,
         command_policy_mode: str = "enforce",
+        mcp_manager: MCPManager | None = None,
     ):
         self.workspace = workspace
         self.command_timeout = command_timeout
@@ -75,15 +77,24 @@ class ToolRegistry:
             cache_root or (workspace.root.parent / "cache")
         )
         self.policy = CommandPolicy(command_policy_mode)
+        self.mcp = mcp_manager
         self._tools: dict[str, Tool] = {}
         self._register_builtin_tools()
 
     @property
     def schemas(self) -> list[dict[str, Any]]:
+        """Built-in schemas; retained for tests and introspection."""
         return [
             tool.openai_schema()
             for tool in self._tools.values()
         ]
+
+    async def model_schemas(self) -> list[dict[str, Any]]:
+        """Built-in schemas plus operator-configured MCP tool schemas."""
+        schemas = list(self.schemas)
+        if self.mcp is not None:
+            schemas.extend(await self.mcp.schemas())
+        return schemas
 
     def is_parallel_safe(self, name: str) -> bool:
         tool = self._tools.get(name)
@@ -92,6 +103,16 @@ class ToolRegistry:
     async def execute(
         self, name: str, arguments: dict[str, Any]
     ) -> ToolResult:
+        if name.startswith("mcp__") and self.mcp is not None:
+            try:
+                ok, output = await self.mcp.call(name, arguments)
+                return ToolResult(ok, output)
+            except Exception as exc:
+                return ToolResult(
+                    False,
+                    f"MCPError: {type(exc).__name__}: {exc}",
+                )
+
         tool = self._tools.get(name)
         if not tool:
             return ToolResult(False, f"unknown tool: {name}")
